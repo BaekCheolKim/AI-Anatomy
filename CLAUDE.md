@@ -16,14 +16,15 @@ The user builds it in review-gated phases and reviews each one before the next b
 6. Parallelism + HPC
 7. Add DeepSeek-V3 without touching any component. If a component has to change, fix the abstraction, not the component.
 
-Planned stack from Phase 2 on: Vite + React 18 + TypeScript strict, Tailwind, `@xyflow/react` + dagre, Zustand. The URL query string is the source of truth for the whole view (`?model=…&lens=…&node=…&depth=…&b=…&s=…&gpu=…`).
+Stack: Vite + React 18 (pinned by the spec) + TypeScript strict, Tailwind v4, Zustand. `@xyflow/react` + dagre come in with the graph canvas in Phase 3. The URL query string is the source of truth for the whole view (`?model=…&lens=…&node=…&depth=…&b=…&s=…&gpu=…`).
 
 ## Commands
 
-Node.js may not be on PATH on this Windows machine. Check `node --version` first.
-
 ```sh
 npm install
+npm run dev                               # Vite dev server
+npm run build                             # typecheck, then build dist/index.html
+npm run preview                           # serve the built dist/
 npm test                                  # vitest run (all tests)
 npm run typecheck                         # tsc --noEmit; this is the lint gate (no `any`, strict)
 npx vitest run src/lib/calc.test.ts       # one file
@@ -31,7 +32,7 @@ npx vitest run -t "kvBytesGQA"            # tests whose name matches
 npm run test:watch
 ```
 
-There is no dev server or build script yet (that arrives in Phase 2).
+`vite-plugin-singlefile` inlines all JS and CSS, so the build is one self-contained `dist/index.html` that also works opened straight from disk (`file://`). Keep it that way: no runtime fetches, no external fonts or assets; inline anything else as a data URI (see the favicon in `index.html`).
 
 ## Architecture
 
@@ -42,6 +43,23 @@ render(model, lens, depth, scenario) -> graph + explanation
 - **Graph structure** is a pure function of `(model, lens)`: shared lens templates (`LensTemplate`, planned under `src/lenses/`) read `ModelSpec.config`.
 - **Depth** only filters that graph by `FlowNode.minDepth`, so expanding never navigates away. Edges are authored at their finest depth; the renderer lifts hidden endpoints to the nearest visible ancestor.
 - **Every number** is a pure function of `(model, scenario)` and is carried as a `Derived`.
+
+### State and the URL
+
+The URL query string is the source of truth, and the view state is `ViewState` = model, lens, depth, selected node and scenario.
+
+- `src/state/url.ts`: `parseView` / `serializeView`. `model`, `lens` and `depth` are always written, so links survive a change of default model. Scenario fields are written only when they differ from `DEFAULT_SCENARIO`. Unparseable values fall back to their defaults and are reported as `notices`, shown in a dismissable banner.
+- `src/state/store.tsx`: a vanilla Zustand store created by `createViewStore()` and provided through React context. `main.tsx` creates the real one. Tests create their own, so there is no module-level singleton.
+- `src/state/sync.ts`: model / lens / node / depth changes `pushState`, so Back works. Scenario changes `replaceState`, so dragging a slider doesn't flood history. `popstate` reloads the view.
+
+Select primitives with `useView(s => s.x)`. A selector that returns a new object re-renders every time.
+
+### UI conventions
+
+- Components show computed numbers only through `<Num value={derived} />` (`src/components/Num.tsx`), which also shows "≈" for estimates. Values flagged approximate in `sources` get `<ApproxMark />`, looked up with `isApprox()` in `src/lib/sources.ts`.
+- Colours are semantic tokens (`bg-panel`, `text-muted`, `border-line`, `text-accent`, …) defined once in `src/index.css`, with a dark default and a light palette for `prefers-color-scheme: light`. Don't use raw Tailwind colours in components.
+- Lens names and their one-line questions live in `src/lenses/meta.ts`. Model facts shown as prose come from `src/lib/describe.ts`, which switches on config kinds.
+- Keyboard: tabs and the depth radio group use roving focus (`src/components/roving.ts`). Keys 1 / 2 / 3 set depth unless a form control has focus.
 
 ### The one-file-per-model rule
 
@@ -93,5 +111,6 @@ The HBM budget (`src/lib/budget.ts`) sums the per-rank bytes of catalog tensors 
 - `src/test/scenarios.ts`: `sweep(m)` generates scenarios across workloads, dtypes and TP/PP/DP/EP layouts for property tests.
 - `src/data/models.contract.test.ts`: checks run on every registered model (file name = id, config sanity, every `sources.field` resolves).
 - `src/architecture.test.ts`: source-text guards (no model ids outside model files, no `any`, `Derived` only built in `calc.ts`).
+- UI tests (`*.test.tsx`) start with `// @vitest-environment jsdom`, set `window.location` first, then mount `<App />` with their own store plus `syncWithUrl`. See `src/components/App.test.tsx`. The rest of the suite runs in Node.
 
 TypeScript runs with `strict`, `noUncheckedIndexedAccess` and `verbatimModuleSyntax` (use `import type` for type-only imports).

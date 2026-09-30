@@ -3,7 +3,22 @@
  * capacity is sized (an "80 GB" H100 is 80 GiB). Throughput and FLOPs use
  * decimal SI units, as vendors quote them.
  */
-import type { Derived, Unit } from '../types';
+import type { Derived, Dtype, Unit } from '../types';
+
+const DTYPE_LABELS: Readonly<Record<Dtype, string>> = {
+  int32: 'INT32',
+  fp32: 'FP32',
+  tf32: 'TF32',
+  bf16: 'BF16',
+  fp16: 'FP16',
+  fp8_e4m3: 'FP8 E4M3',
+  int8: 'INT8',
+  int4: 'INT4',
+};
+
+export function dtypeLabel(d: Dtype): string {
+  return DTYPE_LABELS[d];
+}
 
 const BIN = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB'] as const;
 const SI = ['', 'k', 'M', 'G', 'T', 'P', 'E'] as const;

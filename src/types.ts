@@ -27,9 +27,11 @@ export type LensId = (typeof LENS_IDS)[number];
 export const PARALLEL_AXES = ['tp', 'pp', 'dp', 'ep'] as const;
 export type ParallelAxis = (typeof PARALLEL_AXES)[number];
 
+export const DEPTHS = [1, 2, 3] as const;
+export type Depth = (typeof DEPTHS)[number];
+
 export type MemLocation = 'CPU RAM' | 'GPU HBM' | 'GPU SRAM' | 'NVMe' | 'Interconnect';
 export type NodeKind = 'data' | 'compute' | 'memory' | 'hardware' | 'collective';
-export type Depth = 1 | 2 | 3;
 export type Workload = 'inference' | 'training';
 /** Activation checkpointing. 'full' keeps only each block's input and recomputes the rest in backward. */
 export type Recompute = 'none' | 'full';

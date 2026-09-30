@@ -1,0 +1,99 @@
+@import 'tailwindcss';
+
+/*
+ * Instrument-panel palette. Dark by default; follows the OS when it prefers
+ * light. Components use the semantic names below (bg-panel, text-muted, …),
+ * never raw colours, so both themes stay in sync.
+ */
+:root {
+  color-scheme: dark;
+  --c-canvas: #0a0e13;
+  --c-panel: #0e131a;
+  --c-raised: #151c26;
+  --c-line: #1f2935;
+  --c-line-strong: #334152;
+  --c-fg: #dbe2ea;
+  --c-muted: #8d9aab;
+  --c-accent: #5eead4;
+  --c-accent-ink: #042f2b;
+  --c-warn: #fbbf24;
+  --c-danger: #f87171;
+  --c-ok: #4ade80;
+  --c-grid: rgb(148 163 184 / 0.06);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --c-canvas: #f3f5f8;
+    --c-panel: #ffffff;
+    --c-raised: #edf0f4;
+    --c-line: #dde2e8;
+    --c-line-strong: #b9c2cd;
+    --c-fg: #16202b;
+    --c-muted: #56626f;
+    --c-accent: #0f766e;
+    --c-accent-ink: #ffffff;
+    --c-warn: #a15c07;
+    --c-danger: #b91c1c;
+    --c-ok: #15803d;
+    --c-grid: rgb(15 23 42 / 0.05);
+  }
+}
+
+@theme inline {
+  --color-canvas: var(--c-canvas);
+  --color-panel: var(--c-panel);
+  --color-raised: var(--c-raised);
+  --color-line: var(--c-line);
+  --color-line-strong: var(--c-line-strong);
+  --color-fg: var(--c-fg);
+  --color-muted: var(--c-muted);
+  --color-accent: var(--c-accent);
+  --color-accent-ink: var(--c-accent-ink);
+  --color-warn: var(--c-warn);
+  --color-danger: var(--c-danger);
+  --color-ok: var(--c-ok);
+
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Mono', 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+@layer base {
+  body {
+    background: var(--c-canvas);
+    color: var(--c-fg);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--c-accent);
+    outline-offset: 2px;
+  }
+}
+
+@utility panel-label {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--c-muted);
+}
+
+@utility bg-grid {
+  background-image:
+    linear-gradient(var(--c-grid) 1px, transparent 1px), linear-gradient(90deg, var(--c-grid) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

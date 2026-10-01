@@ -1,19 +1,110 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark light" />
-    <meta name="description" content="How a specific LLM works, from raw text down to GPU execution." />
-    <!-- Inline so the single-file build stays self-contained -->
-    <link
-      rel="icon"
-      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%230a0e13'/><path d='M11.5 14.5 20.5 10.5M11.5 17.5 20.5 21.5' stroke='%235eead4' stroke-width='2'/><circle cx='9' cy='16' r='3.5' fill='%235eead4'/><circle cx='23' cy='9' r='3.5' fill='%235eead4'/><circle cx='23' cy='23' r='3.5' fill='%235eead4'/></svg>"
-    />
-    <title>AI-Flow</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>How an LLM produces the next word</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>How an LLM turns text into the next word</h1>
+    <p id="model-line"></p>
+    <div class="stepper">
+      <button id="prev">◀ Prev</button>
+      <span id="step-label"></span>
+      <button id="next">Next ▶</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="diagram">
+
+      <section class="group">
+        <h2>1 · Input</h2>
+        <div class="box" data-id="text">
+          <div class="title">Text prompt</div>
+          <div class="viz mono" id="viz-text"></div>
+        </div>
+        <div class="arrow">↓</div>
+        <div class="box" data-id="tokenizer">
+          <div class="title">Tokenizer</div>
+          <div class="viz" id="viz-tokens"></div>
+        </div>
+        <div class="arrow">↓</div>
+        <div class="box" data-id="token-ids">
+          <div class="title">Token IDs</div>
+          <div class="viz mono" id="viz-ids"></div>
+        </div>
+        <div class="arrow">↓</div>
+        <div class="box" data-id="embedding">
+          <div class="title">Embedding lookup</div>
+          <div class="viz mono" id="viz-embed"></div>
+        </div>
+      </section>
+
+      <div class="arrow">↓</div>
+
+      <section class="group block">
+        <h2>2 · Transformer layer <span class="repeat" id="repeat"></span></h2>
+        <div class="block-body">
+          <div class="residual" data-id="residual"><span>residual stream</span></div>
+          <div class="block-steps">
+            <div class="box small" data-id="norm1"><div class="title">RMSNorm</div></div>
+            <div class="arrow">↓</div>
+            <div class="box" data-id="attention">
+              <div class="title">Self-attention <span class="tag">tokens look at each other</span></div>
+              <div class="viz" id="viz-attn"></div>
+            </div>
+            <div class="arrow">↓</div>
+            <div class="box small add" data-id="add1"><div class="title">⊕ Add back to residual stream</div></div>
+            <div class="arrow">↓</div>
+            <div class="box small" data-id="norm2"><div class="title">RMSNorm</div></div>
+            <div class="arrow">↓</div>
+            <div class="box" data-id="mlp">
+              <div class="title">Feed-forward network (MLP) <span class="tag">each token on its own</span></div>
+              <div class="mlp-row">
+                <div class="mini mono" id="viz-up"></div>
+                <div class="box inner" data-id="activation">
+                  <div class="title">Activation (SiLU) <span class="tag">non-linearity happens here</span></div>
+                  <div class="viz" id="viz-silu"></div>
+                </div>
+                <div class="mini mono" id="viz-down"></div>
+              </div>
+            </div>
+            <div class="arrow">↓</div>
+            <div class="box small add" data-id="add2"><div class="title">⊕ Add back to residual stream</div></div>
+          </div>
+        </div>
+      </section>
+
+      <div class="arrow">↓</div>
+
+      <section class="group">
+        <h2>3 · Output</h2>
+        <div class="box small" data-id="final-norm"><div class="title">Final RMSNorm</div></div>
+        <div class="arrow">↓</div>
+        <div class="box" data-id="lm-head">
+          <div class="title">LM head → logits</div>
+          <div class="viz mono" id="viz-logits"></div>
+        </div>
+        <div class="arrow">↓</div>
+        <div class="box" data-id="softmax">
+          <div class="title">Softmax → probabilities</div>
+          <div class="viz" id="viz-probs"></div>
+        </div>
+        <div class="arrow">↓</div>
+        <div class="box" data-id="sampling">
+          <div class="title">Pick the next token</div>
+          <div class="viz mono" id="viz-next"></div>
+        </div>
+        <div class="loop">↺ append it to the input and run everything again for the following word</div>
+      </section>
+    </div>
+
+    <aside id="panel"></aside>
+  </main>
+
+  <script src="app.js"></script>
+</body>
 </html>

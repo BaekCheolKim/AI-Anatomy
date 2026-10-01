@@ -1,29 +1,9 @@
-# dependencies (restored by `npm install` from package-lock.json, which IS committed)
-node_modules/
-
-# build and test output
-dist/
-coverage/
-*.tsbuildinfo
-vite.config.*.timestamp-*
-
-# logs
-*.log
-npm-debug.log*
-
-# local environment files
-.env
-.env.*
-!.env.example
-*.local
-
 # editors and OS
-.vscode/*
-!.vscode/extensions.json
+.vscode/
 .idea/
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# Claude Code personal settings (a shared .claude/settings.json would still be committed)
+# Claude Code personal settings
 .claude/settings.local.json

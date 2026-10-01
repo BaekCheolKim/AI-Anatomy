@@ -3,16 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Transformer LLM: text to next-token probabilities</title>
+  <title>AI-Anatomy: model × phase × lens</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <nav id="models" aria-label="Model"></nav>
 
   <header>
-    <h1>Transformer LLM: text to next-token probabilities</h1>
+    <h1>AI-Anatomy</h1>
     <p id="model-line"></p>
-    <div class="stepper">
+    <div id="controls"></div>
+    <div class="stepper" id="stepper">
       <button id="prev">◀ Prev</button>
       <span id="step-label"></span>
       <button id="next">Next ▶</button>
@@ -20,12 +21,15 @@
   </header>
 
   <main>
-    <div id="diagram"></div>
+    <div id="view"></div>
     <aside id="panel"></aside>
   </main>
 
-  <!-- models.js: config data. app.js: template that builds the diagram and text from the selected model. -->
+  <!-- Data: hardware.js, models.js, techniques.js. Numbers: calc.js. Views: app.js. -->
+  <script src="hardware.js"></script>
   <script src="models.js"></script>
+  <script src="techniques.js"></script>
+  <script src="calc.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

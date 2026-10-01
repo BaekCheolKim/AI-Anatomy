@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Technique</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="tech-page">
+  <header>
+    <p><a href="index.html" onclick="if (history.length > 1) { history.back(); return false; }">← back to the diagram</a></p>
+    <h1 id="t-title"></h1>
+    <p id="t-group" class="note"></p>
+  </header>
+  <main class="tech-main">
+    <nav id="t-index" aria-label="All techniques"></nav>
+    <article id="t-body"></article>
+  </main>
+
+  <!-- Template page: technique.html?id=<id>. Section content is not written yet. -->
+  <script src="models.js"></script>
+  <script src="techniques.js"></script>
+  <script>
+    const id = new URLSearchParams(location.search).get('id');
+    const t = window.TECHNIQUES.find((x) => x.id === id) || window.TECHNIQUES[0];
+    const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    document.title = `${t.title} · AI-Anatomy`;
+    document.getElementById('t-title').textContent = t.title;
+    document.getElementById('t-group').textContent = `${t.group} · template page, content not written yet`;
+
+    const users = t.uses ? window.MODELS.filter(t.uses).map((m) => m.name) : null;
+    document.getElementById('t-body').innerHTML = window.TECHNIQUE_SECTIONS.map((s) => {
+      let body = '<p class="placeholder">Not written yet.</p>';
+      if (s === 'Models in this page that use it') {
+        body = users === null ? '<p class="placeholder">Not model-specific: applies to every model, depending on the implementation.</p>'
+          : users.length ? `<p>${users.map(esc).join(', ')}</p>` : '<p class="placeholder">None of the current models.</p>';
+      }
+      return `<section><h2>${esc(s)}</h2>${body}</section>`;
+    }).join('');
+
+    const groups = [...new Set(window.TECHNIQUES.map((x) => x.group))];
+    document.getElementById('t-index').innerHTML = groups.map((g) => `<h3>${esc(g)}</h3><ul>${window.TECHNIQUES.filter((x) => x.group === g)
+      .map((x) => `<li><a href="technique.html?id=${x.id}" class="${x.id === t.id ? 'on' : ''}">${esc(x.title)}</a></li>`).join('')}</ul>`).join('');
+  </script>
+</body>
+</html>

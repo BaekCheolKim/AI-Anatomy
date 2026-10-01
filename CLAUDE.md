@@ -4,43 +4,47 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A single static web page that explains how a transformer LLM turns a prompt into next-token probabilities. The whole pipeline is visible at once, and the connections between stages are explicit. It illustrates the computation; it runs no model.
+A static web page that shows how specific models compute, where their tensors reside, and how data moves between devices. The view is organized as **model × phase × lens**:
 
-It is four plain files, opened directly in a browser (double-click `index.html`; it works from `file://`):
+- **Model:** curated decoder-only LLMs, each included for a stated technique or scale (`why` in models.js), plus template-only families (ViT, latent diffusion, multimodal).
+- **Phase:** training, or inference (split into prefill and decode).
+- **Lens:**
+  - **Data flow:** the stage diagram, with collective-operation markers wherever the parallel layout needs them, plus per-GPU residency in the side panel.
+  - **Memory:** what's allocated at load vs materialized per step or per request, transfers, KV-cache growth, prefill vs decode on the roofline.
+  - **Parallelism:** the 5 dimensions DP/ZeRO/FSDP, TP+SP, PP, EP and CP, each with what it shards and what collectives it costs.
 
-- `index.html`: the page skeleton. Two classic `<script>` tags load `models.js` then `app.js`.
-- `models.js`: `window.MODELS`, one config object per model.
-- `app.js`: the template that builds the diagram and all text from the selected model.
-- `style.css`: plain CSS.
-
-There is no build step, package manager, framework or test suite, and the user wants it kept that way. A previous React/Vite/Tailwind version was deleted for being too complex. Don't add dependencies, build tooling, themes or features the user hasn't asked for, and ask first if something seems to need them.
+It runs no model. Open `index.html` directly in a browser (it works from `file://`). There is no build step, package manager, framework or test suite, and the user wants it kept that way. A React/Vite version was deleted for being too complex. Don't add dependencies, build tooling, themes or features the user hasn't asked for, and ask first if something seems to need them.
 
 ## Writing rule
 
-Use precise technical terminology only: no metaphors, analogies or personification. For example, write "S = Q·Kᵀ/√d_h; causal mask; A = softmax(S)", not "tokens look at each other". This applies to all page text and to explanations given to the user.
+Precise technical terminology only: no metaphors, analogies or personification. State operations, shapes, formulas, byte counts and links. This applies to page text and to explanations given to the user.
+
+## Files
+
+Classic scripts loaded in this order by `index.html`; each defines globals used by the next.
+
+- `hardware.js`: `window.GPUS`, with HBM capacity and bandwidth, dense peak FLOP/s per dtype, NVLink / NIC / PCIe per-direction bandwidth, and SRAM. Also `GPUS_PER_NODE`.
+- `models.js`: `window.FAMILIES` (template families have an `outline` only) and `window.MODELS`. Per model: config fields, `why`, `source`, optional `trainPrecision`, and `presets.training` / `presets.inference` (parallel degrees + workload + `note`). The note says which values are published and cites the source; everything else is an example.
+- `techniques.js`: `window.TECHNIQUES` (id, title, group, `uses(m)` predicate) and `TECHNIQUE_SECTIONS`.
+- `calc.js`: every number on the page. `params`, `layout` (shards, DP groups, micro-batches), `validate`, `trainingMemory` / `inferenceMemory` (rows split into `persistent` and `perStep`), `kvGrowth`, `inferenceSteps` (prefill vs decode roofline), `trainingCompute`, `trainingCollectives` / `inferenceCollectives`, `transfers`, plus the `fmt*` formatters.
+- `app.js`: UI state (`state` = model, phase, step, lens, stage, scenario `S`), synced to the URL hash. `buildStages(m, S)` returns the data-flow stages; marker stages (`kind: 'coll'`) carry collective rows from calc.js. `renderMemory` and `renderParallel` draw the other lenses.
+- `technique.html`: the deep-dive template, `technique.html?id=<technique id>`. It shows the fixed section headings with placeholders, plus "models that use it" computed from `uses(m)`.
+
+## Modelling conventions (in calc.js)
+
+- **Rank order**, innermost first: TP, CP, DP, PP. A group inside one 8-GPU node uses NVLink; otherwise the NIC. Collective volumes use ring algorithms (all-reduce 2(n−1)/n·M; all-gather, reduce-scatter and all-to-all (n−1)/n·M). Times are volume ÷ nominal per-direction bandwidth, with no overlap.
+- **Training precision:**
+  - BF16 weights, FP32 gradient buffer, FP32 master weights.
+  - FP32 AdamW moments, unless the model sets `trainPrecision` (DeepSeek-V3 uses BF16 moments, per its report).
+  - ZeRO-1/2/3 shard the optimizer states / + gradients / + weights over the DP×CP group. For experts, the group is the expert-DP group.
+- **Experts:** split over EP when ep > 1, otherwise TP-split.
+  - The EP all-to-all volume assumes each routed copy is sent separately in BF16 (an overestimate for node-limited routing).
+- **Estimates:** activations and runtime reserve are flagged `approx` and rendered with ≈.
 
 ## Adding a model
 
-Append one entry to `window.MODELS` in `models.js`, with every value taken from the model's published `config.json` and the URL in `source`. Field meanings are documented at the top of that file:
-
-- `attention`: `kind` is `MHA`, `GQA` or `MLA`; `bias` is `none`, `qkv` or `all`.
-- `ffn`: `kind` is `dense` or `moe`; `act` is `silu` or `gelu`; `gated` marks a SwiGLU/GeGLU FFN.
-- `position` is `learned` or `rope`; `norm` is `LayerNorm` or `RMSNorm`; `tied` marks a shared embedding/LM-head matrix.
-
-Then open the page and check that `params(m).total` (and `.active` for MoE) matches the published parameter count. `params()` counts every matrix from the config. If a new model needs an architecture variant these fields can't express, extend the schema and the branches in `buildStages()`. Never branch on the model id.
-
-## How app.js is organised
-
-- `TOKENS`, `IDS`, `NEXT`: the running example ("The cat sat on the"). These values are **illustrative**, as are the attention grid and the expert selection, and the page labels them so. Keep that labelling for any new example values.
-- `params(m)`, `kvValuesPerToken(m)`: all derived numbers come from these functions, never from hand-typed figures.
-- `buildStages(m)` returns `{ input, residual, layer, output }`. Each stage has `id`, `title`, optional `tag` / `viz` (HTML) / `children` (nested boxes; `row: true` with `pre` / `post` lays them out horizontally), plus `what`, optional `why`, `shapes` (label / value rows), optional `note`, and `links` (`[targetId, relation]`, shown as "Connections").
-- `render(m)` writes the diagram and the model line. `order` (Prev / Next) is the depth-first order of the stages. `select(id)` marks the current box (solid blue, CURRENT badge), the next box (dashed amber, NEXT badge) and related boxes, fills the side panel, and writes `#model=…&stage=…` to the URL hash.
-- The small visuals are `attentionGrid()`, `activationChart(m)`, `routerGrid(m)` (which respects group-limited routing) and `probBars()`.
-
-## Planned next
-
-A hardware view for each stage (where tensors live, HBM traffic, and parallelism such as TP/PP/EP sharding and collectives) is requested but not built yet. Add it as an extra per-stage field rendered in the side panel.
+Append to `window.MODELS` using values from the published `config.json`, citing the URL in `source`. Every entry needs a `why` naming the technique or scale it demonstrates; the user removed non-distinctive models. Check that `params(m).total` (and `.active` for MoE) matches the published count. Give it presets that fit in HBM, and mark which preset values are published. Never branch on a model id; extend the config fields and the branches in calc.js and `buildStages` instead.
 
 ## Checking a change
 
-Open `index.html`, switch between all models, click boxes and step with Prev / Next, and check the console for errors.
+Open `index.html`. Go through every model × phase (both inference steps) × lens, step with Prev / Next in the data flow, and check the console for errors. Confirm that presets fit in HBM.

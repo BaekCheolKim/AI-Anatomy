@@ -72,8 +72,8 @@ window.MODELS = [
     position: 'rope', ropeTheta: 500000, norm: 'RMSNorm', normEps: 1e-5, tied: false,
     tokenizer: 'byte-level BPE (tiktoken-based)',
     presets: {
-      training: { dp: 8, tp: 4, pp: 4, ep: 1, cp: 1, zero: 1, recompute: 'full', seq: 8192, mbs: 1, gbs: 128,
-        note: 'Example layout (not published): TP 4 inside a node, PP 4 and DP 8 across nodes.' },
+      training: { dp: 4, tp: 4, pp: 4, ep: 1, cp: 1, zero: 1, recompute: 'full', seq: 8192, mbs: 1, gbs: 128,
+        note: 'Example layout (not published): 64 GPUs, TP 4 inside a node, PP 4 and DP 4 across nodes.' },
       inference: { dp: 1, tp: 4, pp: 1, ep: 1, cp: 1, batch: 32, prompt: 2048, output: 512, wdtype: 'bf16',
         note: 'Example layout: TP 4 inside one node.' },
     },

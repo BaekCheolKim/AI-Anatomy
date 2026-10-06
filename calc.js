@@ -104,11 +104,13 @@ function expertsTouched(m, tokens) {
 const gpuOf = (S) => window.GPUS.find((g) => g.id === S.gpu) || window.GPUS[0];
 const nGPUs = (S) => S.dp * S.tp * S.pp * S.cp;
 
-function link(S, dim) {
+// Inside a node, collectives can use all of a GPU's NVLinks; a P2P send between two GPUs uses only that pair's links.
+function link(S, dim, p2p = false) {
   const G = gpuOf(S), node = G.perNode;
   // EP ranks are taken across DP×CP (stride TP) when they fit there, otherwise across TP×DP×CP contiguously.
   const span = { tp: S.tp, cp: S.tp * S.cp, dp: S.tp * S.cp * S.dp, ep: S.ep <= S.dp * S.cp ? S.tp * S.ep : S.ep, pp: nGPUs(S) }[dim];
-  return span <= node ? { name: G.nvlinkName, bw: G.nvlink, intra: true } : { name: G.nicName, bw: G.nic, intra: false };
+  if (span > node) return { name: G.nicName, bw: G.nic, intra: false };
+  return p2p ? { name: `${G.nvlinkName}, one pair`, bw: G.nvlinkPair, intra: true } : { name: G.nvlinkName, bw: G.nvlink, intra: true };
 }
 
 function layout(m, S) {
@@ -144,6 +146,8 @@ function validate(m, S) {
   if (S.phase === 'training' && S.gbs % (S.dp * S.mbs)) out.push(`Global batch ${S.gbs} is not divisible by DP × micro-batch = ${S.dp * S.mbs}.`);
   if (S.phase === 'inference' && S.wdtype === 'fp8' && !gpuOf(S).flops.fp8) out.push(`${gpuOf(S).name} has no FP8 tensor cores: FP8 weights are dequantized and computed in BF16.`);
   if (S.phase === 'inference' && S.prompt + S.output > m.context) out.push(`Prompt + output exceeds the ${m.context}-token context.`);
+  const sys = window.SYSTEM;
+  if (sys && nGPUs(S) > sys.gpus) out.push(`Layout needs ${nGPUs(S).toLocaleString('en-US')} GPUs; ${sys.name} has ${sys.gpus} (${sys.gpuNodes} nodes, snapshot ${sys.asOf}).`);
   return out;
 }
 
@@ -263,7 +267,7 @@ const AR = (n, M) => (2 * (n - 1) / n) * M;
 const AG = (n, M) => ((n - 1) / n) * M;
 
 function row(S, dim, op, when, msg, count, perOp, tech) {
-  const l = link(S, dim);
+  const l = link(S, dim, op.startsWith('P2P'));
   const volume = count * perOp;
   return { dim, op, when, msg, count, volume, link: l.name, intra: l.intra, time: volume / l.bw, tech };
 }
@@ -322,19 +326,24 @@ function inferenceCollectives(m, S, step) {
 // ---------------- transfers (bytes moved, link, time) ----------------
 function transfers(m, S) {
   const G = gpuOf(S), Ly = layout(m, S), rows = [];
+  // No node-local disk: checkpoints come from network storage over the NIC, then CPU memory → NVLink-C2C → HBM.
+  // The slower hop bounds the load; storage-server throughput is not modelled.
+  const storage = window.SYSTEM?.storage ?? 'storage';
+  const loadPath = `${storage.split(' (')[0]} → NIC → ${G.hostMemName ?? 'CPU memory'} → ${G.hostName} → HBM`;
+  const loadLink = `${G.nicName} → ${G.hostName}`, loadBW = Math.min(G.nic, G.host);
   if (S.phase === 'training') {
     const mem = trainingMemory(m, S), tp = trainPrecision(m);
     const wShard = (Ly.denseShard + Ly.expertShard) * tp.w;                                   // resident TP×PP(×EP) shard before ZeRO-3
     const optShard = Ly.denseShard / (S.zero >= 1 ? Ly.dpDense : 1) + Ly.expertShard / (S.zero >= 1 ? Ly.dpExpert : 1);
     const actMicro = mem.perStep[1].bytes / Ly.inflight;
-    rows.push(['Load', 'Checkpoint / init → GPU HBM', 'BF16 weights + optimizer state of this rank', mem.persistentTotal, G.hostName, G.host]);
+    rows.push(['Load', loadPath, 'checkpoint shard of this rank: BF16 weights + optimizer state', mem.persistentTotal, loadLink, loadBW]);
     rows.push(['Each step', 'HBM → SMs (forward)', `weights streamed once per micro-batch (${fmtN(Ly.micro)} micro-batches)`, Ly.micro * wShard, 'HBM', G.hbmBW]);
     rows.push(['Each step', 'HBM ↔ SMs (backward)', 'weights read + FP32 gradient accumulate (read + write) per micro-batch', Ly.micro * (wShard + 2 * (wShard / tp.w) * tp.grad), 'HBM', G.hbmBW]);
     rows.push(['Each step', 'HBM ↔ SMs (activations)', 'saved activations written in forward and read in backward', Ly.micro * 2 * actMicro, 'HBM', G.hbmBW]);
     rows.push(['Each step', 'HBM ↔ SMs (optimizer)', 'AdamW: read master, m, v, grad; write master, m, v, BF16 weight', optShard * (2 * tp.master + 2 * tp.moments + tp.grad + tp.w), 'HBM', G.hbmBW]);
   } else {
     const mem = inferenceMemory(m, S), st = inferenceSteps(m, S);
-    rows.push(['Load', 'Disk → CPU memory → GPU HBM', 'weights of this rank', mem.persistent[0].bytes, G.hostName, G.host]);
+    rows.push(['Load', loadPath, 'weights of this rank', mem.persistent[0].bytes, loadLink, loadBW]);
     rows.push(['Prefill', 'HBM → SMs', 'weights read once for all prompt positions + KV cache written', st.prefill.Q / (S.tp * S.pp * S.cp), 'HBM', G.hbmBW]);
     rows.push(['Decode step', 'HBM → SMs', 'weights read again + entire KV cache read, for one new position', st.decode.Q / (S.tp * S.pp), 'HBM', G.hbmBW]);
   }

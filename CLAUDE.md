@@ -23,13 +23,12 @@ Precise technical terminology only: no metaphors, analogies or personification. 
 
 Classic scripts loaded in this order by `index.html`; each defines globals used by the next.
 
-- `hardware.js`: `window.GPUS`. The GPU is fixed to **GH200 96GB** at the user's request: the list has that single entry, and the GPU selector is disabled while it holds one entry. The other slots are deliberately left blank for later; to add a GPU, copy the entry and fill every field. Fields:
-  - `hbm`, `hbmBW`: HBM capacity and bandwidth.
-  - `flops`: dense peak FLOP/s per dtype.
-  - `nvlink`, `nic`, `host`: per-direction bandwidth of each link. The host link is NVLink-C2C on GH200.
-  - `perNode`: GPUs per node sharing NVLink.
-  - `sramPerSM`, `source`.
-  - `assumed`: values not from the datasheet. For GH200 these are the node layout (4 GH200 per node, the user's choice) and the 400 Gb/s NIC.
+- `hardware.js`: `window.SYSTEM` and `window.GPUS`. Hardware values come from **`HPC_spec_v1.md`**, the measured spec of the target system (KISTI-6 "HANGANG" pilot, HPE Cray EX4000). Values that file doesn't list (peak FLOP/s, HBM bandwidth) come from the NVIDIA GH200 datasheet. Read `HPC_spec_v1.md` before changing hardware numbers.
+  - The GPU is fixed to **GH200 96GB HBM3**: 97,871 MiB usable HBM measured, 4 per node. Other GPU slots are deliberately left blank for later; to add one, copy the entry and fill every field. The GPU selector is disabled while there is one entry.
+  - Inside a node the GPUs are NVLink all-to-all with NV6 per pair: 150 GB/s per direction per pair (`nvlinkPair`, used for P2P) and 450 GB/s per direction per GPU across all links (`nvlink`, used for collectives).
+  - Between nodes: Slingshot 11 at 200 Gb/s (`nic`). One NIC per GH200 is an assumption (`assumed`), because the spec doesn't give the NIC count.
+  - There is no node-local disk, so checkpoints load from Lustre `/scratch` over the NIC, then NVLink-C2C into HBM.
+  - `SYSTEM.gpus` (88) is a snapshot that will grow. `validate()` warns when a layout needs more GPUs than that.
 - `models.js`: `window.FAMILIES` (template families have an `outline` only) and `window.MODELS`. Per model: config fields, `why`, `source`, optional `trainPrecision`, and `presets.training` / `presets.inference` (parallel degrees + workload + `note`). The note says which values are published and cites the source; everything else is an example.
 - `techniques.js`: `window.TECHNIQUES` (id, title, group, `uses(m)` predicate) and `TECHNIQUE_SECTIONS`.
 - `calc.js`: every number on the page. `params`, `layout` (shards, DP groups, micro-batches), `validate`, `trainingMemory` / `inferenceMemory` (rows split into `persistent` and `perStep`), `kvGrowth`, `inferenceSteps` (prefill vs decode roofline), `trainingCompute`, `trainingCollectives` / `inferenceCollectives`, `transfers`, plus the `fmt*` formatters.

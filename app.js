@@ -98,6 +98,13 @@ function controls() {
   $('controls').innerHTML = html;
 }
 
+// Target system, from hardware.js (source: HPC_spec_v1.md).
+function systemLine() {
+  const sys = window.SYSTEM, G = window.GPUS[0];
+  if (!sys) return '';
+  return `System: <b>${esc(sys.name)}</b> (${esc(sys.platform)}): ${G.perNode} × ${esc(G.name)} per node (${fmtBytes(G.hbm)} usable HBM each), ${esc(G.nvlinkName)} inside a node, ${esc(G.nicName)} between nodes; ${sys.gpus} GPUs in ${sys.gpuNodes} nodes as of ${esc(sys.asOf)}. Source: <a href="${esc(sys.source)}">${esc(sys.source)}</a>.`;
+}
+
 function modelLine() {
   if (isTemplate()) {
     const f = window.FAMILIES.find((x) => x.id === state.model);
@@ -107,7 +114,7 @@ function modelLine() {
   const m = currentModel(), P = params(m);
   $('model-line').innerHTML = `<b>${esc(m.name)}</b> (${esc(m.org)}, ${m.year}). ${esc(m.why)}<br>
     L = ${m.layers}, H = ${fmtN(m.hidden)}, V = ${fmtN(m.vocab)}, context ${fmtN(m.context)}, ${fmtParams(P.total)} parameters${m.ffn.kind === 'moe' ? `, ${fmtParams(P.active)} active per token` : ''}.
-    Source: <a href="${esc(m.source)}" target="_blank" rel="noreferrer">config.json</a>${m.sourceNote ? ` (${esc(m.sourceNote)})` : ''}.`;
+    Source: <a href="${esc(m.source)}" target="_blank" rel="noreferrer">config.json</a>${m.sourceNote ? ` (${esc(m.sourceNote)})` : ''}.<br>${systemLine()}`;
 }
 
 // ---------------- small visuals (illustrative example) ----------------
@@ -459,7 +466,7 @@ function kvChart(m, S) {
   let svg = `<svg width="${W}" height="${Hh}" role="img" aria-label="memory per GPU vs context length">`;
   [0, 0.5, 1].forEach((t) => { const y = t * yMax; svg += `<line x1="${padL}" x2="${W - padR}" y1="${sy(y)}" y2="${sy(y)}" stroke="#eef0f3"/><text x="${padL - 6}" y="${sy(y) + 4}" font-size="10" text-anchor="end" fill="#6b7280">${gib(y)} GiB</text>`; });
   ticks.forEach((x) => { svg += `<text x="${sx(x)}" y="${Hh - 10}" font-size="10" text-anchor="middle" fill="#6b7280">${fmtN(x)}</text>`; });
-  svg += `<line x1="${padL}" x2="${W - padR}" y1="${sy(k.cap)}" y2="${sy(k.cap)}" stroke="#dc2626" stroke-dasharray="4 3"/><text x="${W - padR}" y="${sy(k.cap) - 5}" font-size="10" text-anchor="end" fill="#dc2626">HBM capacity ${gib(k.cap)} GiB</text>`;
+  svg += `<line x1="${padL}" x2="${W - padR}" y1="${sy(k.cap)}" y2="${sy(k.cap)}" stroke="#dc2626" stroke-dasharray="4 3"/><text x="${W - padR}" y="${sy(k.cap) - 5}" font-size="10" text-anchor="end" fill="#dc2626">HBM capacity ${(k.cap / 2 ** 30).toFixed(1)} GiB</text>`;
   svg += `<polyline points="${pts}" fill="none" stroke="#2563eb" stroke-width="2"/>`;
   const cx = Math.min(k.current, xMax);
   svg += `<circle cx="${sx(cx)}" cy="${sy(k.fixed + k.perTok * cx)}" r="5" fill="#2563eb" stroke="#fff" stroke-width="2"><title>${fmtN(k.current)} tokens: ${fmtBytes(k.fixed + k.perTok * k.current)}</title></circle>`;
@@ -527,7 +534,7 @@ function renderParallel() {
   const zeroText = ['ZeRO-0: every DP rank holds full weights, gradients and optimizer states.', 'ZeRO-1: optimizer states (master weights, moments) split 1/DP.', 'ZeRO-2: optimizer states and gradients split 1/DP.', 'ZeRO-3 / FSDP: optimizer states, gradients and weights split 1/DP; weights are all-gathered per layer when used.'][S.zero];
   const inf = (t) => (train ? '' : `<b>Inference:</b> ${t}`);
   $('view').innerHTML = `<div class="card"><h3>Layout: ${fmtN(Ly.N)} GPUs = DP ${S.dp} × TP ${S.tp} × PP ${S.pp} × CP ${S.cp}${moe ? `, EP ${S.ep}` : ''} · ${fmtN(Ly.nodes)} node${Ly.nodes > 1 ? 's' : ''} of ${gpuOf(S).perNode} × ${esc(gpuOf(S).name)}</h3>
-      <p>Rank order, innermost first: TP, CP, DP, PP. A group that fits inside one node communicates over ${esc(gpuOf(S).nvlinkName)} (${fmtBW(gpuOf(S).nvlink)} per direction per GPU); a group that spans nodes is limited by the NIC (${esc(gpuOf(S).nicName)}, ${fmtBW(gpuOf(S).nic)} per GPU).</p>
+      <p>Rank order, innermost first: TP, CP, DP, PP. Inside a node the ${gpuOf(S).perNode} GPUs are connected all-to-all over NVLink: ${fmtBW(gpuOf(S).nvlinkPair)} per direction between any pair, ${fmtBW(gpuOf(S).nvlink)} per direction across all of one GPU's links. Collectives inside a node are computed at the all-links figure, P2P sends at the per-pair figure. A group that spans nodes is limited by the NIC (${esc(gpuOf(S).nicName)}, ${fmtBW(gpuOf(S).nic)} per GPU). Keep TP inside a node; CP and DP tolerate crossing nodes better.</p>
       ${gpuOf(S).assumed ? `<p class="note">Assumption: ${esc(gpuOf(S).assumed)}</p>` : ''}<p>
       ${train ? '' : 'In inference, TP and EP are the common choices inside a node; PP is used when weights exceed one node; DP runs independent replicas.'}</p></div>
     ${card('dp', train ? 'Data parallel (DP / ZeRO / FSDP)' : 'Data parallel (replicas)', S.dp, S.dp > 1,

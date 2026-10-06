@@ -1,38 +1,28 @@
-// GPU and interconnect specifications (NVIDIA datasheets). Peak FLOP/s are dense tensor-core
-// figures (datasheets also quote 2x "with sparsity"). Link bandwidths are per direction, per GPU.
+// GPU / node specifications. Peak FLOP/s are dense tensor-core figures (datasheets also list 2x
+// "with sparsity"). Bandwidths are per direction, per GPU.
 //
-// hbm:    HBM capacity, bytes          hbmBW:  HBM bandwidth, bytes/s
-// flops:  dense peak by compute dtype  nvlink: GPU-to-GPU inside a node
-// nic:    GPU-to-GPU across nodes (one InfiniBand NIC per GPU)
-// pcie:   host-to-GPU link             sm / sramPerSM / l2: on-chip resources
+// hbm, hbmBW   HBM capacity (bytes) and bandwidth (bytes/s)
+// flops        dense peak FLOP/s by compute dtype
+// nvlink       GPU-to-GPU bandwidth inside a node        perNode  GPUs per node sharing NVLink
+// nic          GPU-to-GPU bandwidth across nodes          host     CPU-to-GPU link used to load checkpoints
+// sramPerSM    on-chip L1 / shared memory per SM
+// assumed      fields that depend on the system build and are not in the GPU datasheet
 
 const GiB = 2 ** 30;
+const GH200_DATASHEET = 'https://dam-cdn.nvd.orangelogic.com/AssetLink/tkno03fa645gb7f33w60rf200d330420.pdf';
 
 window.GPUS = [
   {
-    id: 'h100', name: 'H100 SXM 80GB',
-    hbm: 80 * GiB, hbmBW: 3.35e12,
-    flops: { bf16: 989e12, fp8: 1979e12 },
-    sm: 132, sramPerSM: 256 * 1024, l2: 50 * 2 ** 20,
-    nvlink: 450e9, nic: 50e9, nicName: 'InfiniBand NDR 400 Gb/s', pcie: 64e9, pcieName: 'PCIe Gen5 x16',
-    source: 'https://resources.nvidia.com/en-us-tensor-core/nvidia-tensor-core-gpu-datasheet',
+    id: 'gh200-96gb', name: 'GH200 96GB',
+    hbm: 96 * GiB, hbmBW: 4e12,                      // 96 GB HBM3, up to 4 TB/s
+    flops: { bf16: 990e12, fp8: 1979e12 },             // dense; datasheet lists 1,979 / 3,958 TFLOPS with sparsity
+    sramPerSM: 256 * 1024,                             // Hopper SM: 256 KB combined L1 / shared memory
+    nvlink: 450e9, nvlinkName: 'NVLink',               // 18 NVLink 4 links, 900 GB/s total
+    host: 450e9, hostName: 'NVLink-C2C',               // Grace CPU ↔ Hopper GPU, 900 GB/s total
+    perNode: 4,                                        // assumed: 4 GH200 per node, NVLink between them
+    nic: 50e9, nicName: 'NIC 400 Gb/s',                // assumed: one 400 Gb/s NIC per GH200
+    assumed: 'Node layout (4 GH200 per node, NVLink between them) and NIC bandwidth (400 Gb/s per GH200) depend on the system build; they are not in the datasheet.',
+    source: GH200_DATASHEET,
   },
-  {
-    id: 'h200', name: 'H200 SXM 141GB',
-    hbm: 141 * GiB, hbmBW: 4.8e12,
-    flops: { bf16: 989e12, fp8: 1979e12 },
-    sm: 132, sramPerSM: 256 * 1024, l2: 50 * 2 ** 20,
-    nvlink: 450e9, nic: 50e9, nicName: 'InfiniBand NDR 400 Gb/s', pcie: 64e9, pcieName: 'PCIe Gen5 x16',
-    source: 'https://www.nvidia.com/en-us/data-center/h200/',
-  },
-  {
-    id: 'a100', name: 'A100 SXM 80GB',
-    hbm: 80 * GiB, hbmBW: 2.039e12,
-    flops: { bf16: 312e12 },
-    sm: 108, sramPerSM: 192 * 1024, l2: 40 * 2 ** 20,
-    nvlink: 300e9, nic: 25e9, nicName: 'InfiniBand HDR 200 Gb/s', pcie: 32e9, pcieName: 'PCIe Gen4 x16',
-    source: 'https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/nvidia-a100-datasheet-us-nvidia-1758950-r4-web.pdf',
-  },
+  // Reserved for other GPUs, left blank on purpose. To add one, copy the entry above and fill every field.
 ];
-
-window.GPUS_PER_NODE = 8;

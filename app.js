@@ -23,7 +23,7 @@ function applyPreset() {
   const m = currentModel();
   if (!m) return;
   const p = m.presets[state.phase];
-  const base = { phase: state.phase, gpu: 'h100', dp: 1, tp: 1, pp: 1, ep: 1, cp: 1, zero: 1, recompute: 'none', seq: 8192, mbs: 1, gbs: 64,
+  const base = { phase: state.phase, gpu: window.GPUS[0].id, dp: 1, tp: 1, pp: 1, ep: 1, cp: 1, zero: 1, recompute: 'none', seq: 8192, mbs: 1, gbs: 64,
     batch: 16, prompt: 2048, output: 512, wdtype: 'bf16' };
   state.S = { ...base, ...p, phase: state.phase };
 }
@@ -44,6 +44,8 @@ function readHash() {
     const v = q.get(k);
     if (v !== null) state.S[k] = /^\d+$/.test(v) ? Number(v) : v;
   });
+  // Links saved before the GPU list changed may name a GPU that no longer exists.
+  if (state.S && !window.GPUS.some((g) => g.id === state.S.gpu)) state.S.gpu = window.GPUS[0].id;
 }
 
 // ---------------- top: model bar ----------------
@@ -79,13 +81,14 @@ function controls() {
       return `<label>${LABEL[k]} <select data-s="${k}">${list.map((o) => `<option ${o === S[k] ? 'selected' : ''}>${o}</option>`).join('')}</select></label>`;
     };
     const num = (k) => `<label>${LABEL[k]} <input type="number" min="1" data-s="${k}" value="${S[k]}"></label>`;
-    const gpu = `<label>GPU <select data-s="gpu">${window.GPUS.map((g) => `<option value="${g.id}" ${g.id === S.gpu ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}</select></label>`;
+    // Fixed while hardware.js lists one GPU; becomes a choice when entries are added there.
+    const gpu = `<label title="${esc(gpuOf(S).assumed || '')}">GPU <select data-s="gpu" ${window.GPUS.length === 1 ? 'disabled' : ''}>${window.GPUS.map((g) => `<option value="${g.id}" ${g.id === S.gpu ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}</select></label>`;
     const common = [gpu, sel('dp', OPTS.dp), sel('tp', OPTS.tp), sel('pp', OPTS.pp), sel('ep', OPTS.ep), sel('cp', OPTS.cp)];
     const phaseOnly = state.phase === 'training'
       ? [sel('zero', OPTS.zero), sel('recompute', OPTS.recompute), sel('seq', OPTS.seq), sel('mbs', OPTS.mbs), num('gbs')]
       : [sel('wdtype', OPTS.wdtype), num('batch'), num('prompt'), num('output')];
     html += `<div class="scenario">${[...common, ...phaseOnly].join('')}
-      <span class="gpus">= ${fmtN(nGPUs(S))} GPUs (${fmtN(ceil(nGPUs(S) / window.GPUS_PER_NODE))} node${nGPUs(S) > 8 ? 's' : ''})</span>
+      <span class="gpus">= ${fmtN(nGPUs(S))} GPU${nGPUs(S) > 1 ? 's' : ''} (${fmtN(layout(currentModel(), S).nodes)} node${layout(currentModel(), S).nodes > 1 ? 's' : ''} of ${gpuOf(S).perNode})</span>
       <button data-preset>Reset to preset</button></div>`;
     const m = currentModel();
     const issues = validate(m, S);
@@ -523,8 +526,9 @@ function renderParallel() {
   };
   const zeroText = ['ZeRO-0: every DP rank holds full weights, gradients and optimizer states.', 'ZeRO-1: optimizer states (master weights, moments) split 1/DP.', 'ZeRO-2: optimizer states and gradients split 1/DP.', 'ZeRO-3 / FSDP: optimizer states, gradients and weights split 1/DP; weights are all-gathered per layer when used.'][S.zero];
   const inf = (t) => (train ? '' : `<b>Inference:</b> ${t}`);
-  $('view').innerHTML = `<div class="card"><h3>Layout: ${fmtN(Ly.N)} GPUs = DP ${S.dp} × TP ${S.tp} × PP ${S.pp} × CP ${S.cp}${moe ? `, EP ${S.ep}` : ''} · ${fmtN(Ly.nodes)} node${Ly.nodes > 1 ? 's' : ''} of ${window.GPUS_PER_NODE}</h3>
-      <p>Rank order, innermost first: TP, CP, DP, PP. A group that fits inside one node communicates over NVLink (${fmtBW(gpuOf(S).nvlink)} per direction); a group that spans nodes is limited by the NIC (${esc(gpuOf(S).nicName)}, ${fmtBW(gpuOf(S).nic)} per GPU).
+  $('view').innerHTML = `<div class="card"><h3>Layout: ${fmtN(Ly.N)} GPUs = DP ${S.dp} × TP ${S.tp} × PP ${S.pp} × CP ${S.cp}${moe ? `, EP ${S.ep}` : ''} · ${fmtN(Ly.nodes)} node${Ly.nodes > 1 ? 's' : ''} of ${gpuOf(S).perNode} × ${esc(gpuOf(S).name)}</h3>
+      <p>Rank order, innermost first: TP, CP, DP, PP. A group that fits inside one node communicates over ${esc(gpuOf(S).nvlinkName)} (${fmtBW(gpuOf(S).nvlink)} per direction per GPU); a group that spans nodes is limited by the NIC (${esc(gpuOf(S).nicName)}, ${fmtBW(gpuOf(S).nic)} per GPU).</p>
+      ${gpuOf(S).assumed ? `<p class="note">Assumption: ${esc(gpuOf(S).assumed)}</p>` : ''}<p>
       ${train ? '' : 'In inference, TP and EP are the common choices inside a node; PP is used when weights exceed one node; DP runs independent replicas.'}</p></div>
     ${card('dp', train ? 'Data parallel (DP / ZeRO / FSDP)' : 'Data parallel (replicas)', S.dp, S.dp > 1,
       train ? `batch: each rank processes ${fmtN(S.gbs / S.dp)} of ${fmtN(S.gbs)} sequences per step. ${zeroText}` : `requests: each replica serves ${fmtN(Ly.bReplica)} of ${fmtN(S.batch)} sequences.`,

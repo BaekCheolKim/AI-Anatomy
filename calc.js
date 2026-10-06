@@ -105,10 +105,10 @@ const gpuOf = (S) => window.GPUS.find((g) => g.id === S.gpu) || window.GPUS[0];
 const nGPUs = (S) => S.dp * S.tp * S.pp * S.cp;
 
 function link(S, dim) {
-  const G = gpuOf(S), node = window.GPUS_PER_NODE;
+  const G = gpuOf(S), node = G.perNode;
   // EP ranks are taken across DP×CP (stride TP) when they fit there, otherwise across TP×DP×CP contiguously.
   const span = { tp: S.tp, cp: S.tp * S.cp, dp: S.tp * S.cp * S.dp, ep: S.ep <= S.dp * S.cp ? S.tp * S.ep : S.ep, pp: nGPUs(S) }[dim];
-  return span <= node ? { name: 'NVLink', bw: G.nvlink, intra: true } : { name: G.nicName, bw: G.nic, intra: false };
+  return span <= node ? { name: G.nvlinkName, bw: G.nvlink, intra: true } : { name: G.nicName, bw: G.nic, intra: false };
 }
 
 function layout(m, S) {
@@ -116,7 +116,7 @@ function layout(m, S) {
   const g = m.ffn.kind === 'moe' && S.ep > 1 ? S.ep : S.tp;     // ranks one layer's experts are split over
   const micro = S.phase === 'training' ? S.gbs / (S.dp * S.mbs) : 1;
   return {
-    N: nGPUs(S), nodes: ceil(nGPUs(S) / window.GPUS_PER_NODE), g,
+    N: nGPUs(S), nodes: ceil(nGPUs(S) / gpuOf(S).perNode), g,
     denseShard: P.dense / (S.tp * S.pp),                // params per GPU outside routed experts
     expertShard: P.routed / (S.pp * g),                 // routed-expert params per GPU
     expertsPerGPU: m.ffn.kind === 'moe' ? m.ffn.experts / (S.ep > 1 ? S.ep : 1) : 0,
@@ -133,6 +133,7 @@ function validate(m, S) {
   const out = [], d = attnDims(m);
   if (d.heads % S.tp) out.push(`TP ${S.tp} does not divide ${d.heads} query heads.`);
   if (d.kv !== null && S.tp > d.kv) out.push(`TP ${S.tp} > ${d.kv} KV heads: each KV head is replicated on ${S.tp / d.kv} ranks.`);
+  if (S.tp > gpuOf(S).perNode) out.push(`TP ${S.tp} spans ${ceil(S.tp / gpuOf(S).perNode)} nodes of ${gpuOf(S).perNode}: TP collectives run over the NIC instead of NVLink.`);
   if (S.pp > m.layers) out.push(`PP ${S.pp} exceeds ${m.layers} layers.`);
   if (m.ffn.kind === 'moe') {
     if (m.ffn.experts % S.ep) out.push(`EP ${S.ep} does not divide ${m.ffn.experts} experts.`);
@@ -326,14 +327,14 @@ function transfers(m, S) {
     const wShard = (Ly.denseShard + Ly.expertShard) * tp.w;                                   // resident TP×PP(×EP) shard before ZeRO-3
     const optShard = Ly.denseShard / (S.zero >= 1 ? Ly.dpDense : 1) + Ly.expertShard / (S.zero >= 1 ? Ly.dpExpert : 1);
     const actMicro = mem.perStep[1].bytes / Ly.inflight;
-    rows.push(['Load', 'Checkpoint / init → GPU HBM', 'BF16 weights + optimizer state of this rank', mem.persistentTotal, G.pcieName, G.pcie]);
+    rows.push(['Load', 'Checkpoint / init → GPU HBM', 'BF16 weights + optimizer state of this rank', mem.persistentTotal, G.hostName, G.host]);
     rows.push(['Each step', 'HBM → SMs (forward)', `weights streamed once per micro-batch (${fmtN(Ly.micro)} micro-batches)`, Ly.micro * wShard, 'HBM', G.hbmBW]);
     rows.push(['Each step', 'HBM ↔ SMs (backward)', 'weights read + FP32 gradient accumulate (read + write) per micro-batch', Ly.micro * (wShard + 2 * (wShard / tp.w) * tp.grad), 'HBM', G.hbmBW]);
     rows.push(['Each step', 'HBM ↔ SMs (activations)', 'saved activations written in forward and read in backward', Ly.micro * 2 * actMicro, 'HBM', G.hbmBW]);
     rows.push(['Each step', 'HBM ↔ SMs (optimizer)', 'AdamW: read master, m, v, grad; write master, m, v, BF16 weight', optShard * (2 * tp.master + 2 * tp.moments + tp.grad + tp.w), 'HBM', G.hbmBW]);
   } else {
     const mem = inferenceMemory(m, S), st = inferenceSteps(m, S);
-    rows.push(['Load', 'Disk → host RAM → GPU HBM', 'weights of this rank', mem.persistent[0].bytes, G.pcieName, G.pcie]);
+    rows.push(['Load', 'Disk → CPU memory → GPU HBM', 'weights of this rank', mem.persistent[0].bytes, G.hostName, G.host]);
     rows.push(['Prefill', 'HBM → SMs', 'weights read once for all prompt positions + KV cache written', st.prefill.Q / (S.tp * S.pp * S.cp), 'HBM', G.hbmBW]);
     rows.push(['Decode step', 'HBM → SMs', 'weights read again + entire KV cache read, for one new position', st.decode.Q / (S.tp * S.pp), 'HBM', G.hbmBW]);
   }

@@ -23,7 +23,13 @@ Precise technical terminology only: no metaphors, analogies or personification. 
 
 Classic scripts loaded in this order by `index.html`; each defines globals used by the next.
 
-- `hardware.js`: `window.GPUS`, with HBM capacity and bandwidth, dense peak FLOP/s per dtype, NVLink / NIC / PCIe per-direction bandwidth, and SRAM. Also `GPUS_PER_NODE`.
+- `hardware.js`: `window.GPUS`. The GPU is fixed to **GH200 96GB** at the user's request: the list has that single entry, and the GPU selector is disabled while it holds one entry. The other slots are deliberately left blank for later; to add a GPU, copy the entry and fill every field. Fields:
+  - `hbm`, `hbmBW`: HBM capacity and bandwidth.
+  - `flops`: dense peak FLOP/s per dtype.
+  - `nvlink`, `nic`, `host`: per-direction bandwidth of each link. The host link is NVLink-C2C on GH200.
+  - `perNode`: GPUs per node sharing NVLink.
+  - `sramPerSM`, `source`.
+  - `assumed`: values not from the datasheet. For GH200 these are the node layout (4 GH200 per node, the user's choice) and the 400 Gb/s NIC.
 - `models.js`: `window.FAMILIES` (template families have an `outline` only) and `window.MODELS`. Per model: config fields, `why`, `source`, optional `trainPrecision`, and `presets.training` / `presets.inference` (parallel degrees + workload + `note`). The note says which values are published and cites the source; everything else is an example.
 - `techniques.js`: `window.TECHNIQUES` (id, title, group, `uses(m)` predicate) and `TECHNIQUE_SECTIONS`.
 - `calc.js`: every number on the page. `params`, `layout` (shards, DP groups, micro-batches), `validate`, `trainingMemory` / `inferenceMemory` (rows split into `persistent` and `perStep`), `kvGrowth`, `inferenceSteps` (prefill vs decode roofline), `trainingCompute`, `trainingCollectives` / `inferenceCollectives`, `transfers`, plus the `fmt*` formatters.
@@ -32,7 +38,7 @@ Classic scripts loaded in this order by `index.html`; each defines globals used 
 
 ## Modelling conventions (in calc.js)
 
-- **Rank order**, innermost first: TP, CP, DP, PP. A group inside one 8-GPU node uses NVLink; otherwise the NIC. Collective volumes use ring algorithms (all-reduce 2(n−1)/n·M; all-gather, reduce-scatter and all-to-all (n−1)/n·M). Times are volume ÷ nominal per-direction bandwidth, with no overlap.
+- **Rank order**, innermost first: TP, CP, DP, PP. A group inside one node (`perNode` GPUs) uses NVLink; otherwise the NIC. `validate()` warns when TP spans nodes. Collective volumes use ring algorithms (all-reduce 2(n−1)/n·M; all-gather, reduce-scatter and all-to-all (n−1)/n·M). Times are volume ÷ nominal per-direction bandwidth, with no overlap.
 - **Training precision:**
   - BF16 weights, FP32 gradient buffer, FP32 master weights.
   - FP32 AdamW moments, unless the model sets `trainPrecision` (DeepSeek-V3 uses BF16 moments, per its report).

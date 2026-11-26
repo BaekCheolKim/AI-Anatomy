@@ -4,52 +4,62 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A static web page that shows how specific models compute, where their tensors reside, and how data moves between devices. The view is organized as **model × phase × lens**:
+A static web page that shows, with figures, how large AI models are trained, served and run, and the techniques each model uses. Every number is computed from the selected model's published config.
 
-- **Model:** curated decoder-only LLMs, each included for a stated technique or scale (`why` in models.js), plus template-only families (ViT, latent diffusion, multimodal).
-- **Phase:** training, or inference (split into prefill and decode).
-- **Lens:**
-  - **Data flow:** the stage diagram, with collective-operation markers wherever the parallel layout needs them, plus per-GPU residency in the side panel.
-  - **Memory:** what's allocated at load vs materialized per step or per request, transfers, KV-cache growth, prefill vs decode on the roofline.
-  - **Parallelism:** the 5 dimensions DP/ZeRO/FSDP, TP+SP, PP, EP and CP, each with what it shards and what collectives it costs.
+- **Order:** chapters follow Andrej Karpathy's video "Deep Dive into LLMs like ChatGPT" (pre-training, post-training, reinforcement learning). The video is a reference only. The page adds what it doesn't cover: model architectures, running models, and other model families. PLAN.md lists every chapter and its status.
+- **Hardware-independent:** results are parameter counts, bytes and FLOPs. The reader sets GPU memory and GPU count in the top bar. These are the only hardware inputs, apart from GPUs per node where parallel groups are placed. Times appear only as measured values with their conditions, or when the reader enters optional GPU speeds (peak FLOP/s, memory bandwidth, link bandwidth) in a chapter.
+- **Model selector:** one model at a time in the top bar. Figures compare all models where a quantity is comparable.
 
-It runs no model. Open `index.html` directly in a browser (it works from `file://`). There is no build step, package manager, framework or test suite, and the user wants it kept that way. A React/Vite version was deleted for being too complex. Don't add dependencies, build tooling, themes or features the user hasn't asked for, and ask first if something seems to need them.
+It runs no model. Open `index.html` directly in a browser (it works from `file://`). There is no build step, package manager, framework or test suite, and the user wants it kept that way. A React/Vite version was deleted for being too complex. Don't add dependencies, build tooling or themes, and ask first if something seems to need them.
 
 ## Writing rule
 
-Precise technical terminology only: no metaphors, analogies or personification. State operations, shapes, formulas, byte counts and links. This applies to page text and to explanations given to the user.
+Precise technical terminology only: no metaphors, analogies or personification. State operations, shapes, formulas, byte counts and links. Where the video uses an analogy, state the mechanism instead. This applies to page text and to explanations given to the user.
+
+## Style rule
+
+The user rejected the earlier look (bordered and rounded boxes, blue accents) as "too Claude-themed".
+- White page, black and gray text, hairlines. No cards, rounded boxes, shadows, or accent colors in the interface. Controls are native inputs and text links; the selected item is underlined.
+- Color appears only in figures and encodes the kind of data, with the same mapping everywhere (CSS variables in style.css): weights green, activations orange, KV cache reddish purple, gradients and optimizer state vermillion, communication yellow. Lighter and darker shades of one hue encode states of the same data, for example stored but not selected.
+- Figures are SVG drawn at the chapter column's width (`ctx.width`), so their text keeps its size. Check a 390 px viewport; there is no horizontal page scroll.
 
 ## Files
 
 Classic scripts loaded in this order by `index.html`; each defines globals used by the next.
 
-- `hardware.js`: `window.SYSTEM` and `window.GPUS`. Hardware values come from **`HPC_spec_v1.md`**, the measured spec of the target system (KISTI-6 "HANGANG" pilot, HPE Cray EX4000). Values that file doesn't list (peak FLOP/s, HBM bandwidth) come from the NVIDIA GH200 datasheet. Read `HPC_spec_v1.md` before changing hardware numbers.
-  - The GPU is fixed to **GH200 96GB HBM3**: 97,871 MiB usable HBM measured, 4 per node. Other GPU slots are deliberately left blank for later; to add one, copy the entry and fill every field. The GPU selector is disabled while there is one entry.
-  - Inside a node the GPUs are NVLink all-to-all with NV6 per pair: 150 GB/s per direction per pair (`nvlinkPair`, used for P2P) and 450 GB/s per direction per GPU across all links (`nvlink`, used for collectives).
-  - Between nodes: Slingshot 11 at 200 Gb/s (`nic`). One NIC per GH200 is an assumption (`assumed`), because the spec doesn't give the NIC count.
-  - There is no node-local disk, so checkpoints load from Lustre `/scratch` over the NIC, then NVLink-C2C into HBM.
-  - `SYSTEM.gpus` (88) is a snapshot that will grow. `validate()` warns when a layout needs more GPUs than that.
-- `models.js`: `window.FAMILIES` (template families have an `outline` only) and `window.MODELS`. Per model: config fields, `why`, `source`, optional `trainPrecision`, and `presets.training` / `presets.inference` (parallel degrees + workload + `note`). The note says which values are published and cites the source; everything else is an example.
-- `techniques.js`: `window.TECHNIQUES` (id, title, group, `uses(m)` predicate) and `TECHNIQUE_SECTIONS`.
-- `calc.js`: every number on the page. `params`, `layout` (shards, DP groups, micro-batches), `validate`, `trainingMemory` / `inferenceMemory` (rows split into `persistent` and `perStep`), `kvGrowth`, `inferenceSteps` (prefill vs decode roofline), `trainingCompute`, `trainingCollectives` / `inferenceCollectives`, `transfers`, plus the `fmt*` formatters.
-- `app.js`: UI state (`state` = model, phase, step, lens, stage, scenario `S`), synced to the URL hash. `buildStages(m, S)` returns the data-flow stages; marker stages (`kind: 'coll'`) carry collective rows from calc.js. `renderMemory` and `renderParallel` draw the other lenses.
-- `technique.html`: the deep-dive template, `technique.html?id=<technique id>`. It shows the fixed section headings with placeholders, plus "models that use it" computed from `uses(m)`.
+- `models.js`: `window.MODELS` (the eight models of the model bar) and `window.OTHER_MODELS` (embedding, diffusion and speech models used in their own chapters). Per model: config fields, `why`, `source`, `checkpoint`, `published`, `release` (dtypes of the published weights by tensor class), `layouts.training`, `chat`, `postTraining`, and optional `training`, `layerTypes`, `linearAttention`, `mtp`, `vision`, `ropeScaling`, `longContext`. The header comment defines the fields.
+- `calc.js`: every number. Parameters (`params`, with `total`, `checkpoint`, `active`, `matmul`); weights by class and dtype (`weightClasses`, `releaseDtypes`, `weightBytes`); MoE (`expertsTouched`, `dispatchBytes`); caches (`cacheValues`, `cacheBytes`, `kvBytesPerToken`, `kvBytesPerTokenPerGPU`, `cacheBytesPerGPU`); FLOPs (`attnFlopsPerToken`, `forwardFlopsPerToken`, `trainingFlops`); training (`trainBytesPerParam`, `savedValuesPerToken`, `trainingLayout`, `validateLayout`, `trainingMemoryPerGPU`, `trainingCollectiveRows`); inference (`inferenceStep`, `stepTime`); collectives (`groupPlacement`, `collectiveBytes`); `fmt*` formatters.
+- `figures.js`: `esc`, `figure` (SVG), `logScale`, a seeded random generator for illustrative examples, `dtypeSelect`, and the optional GPU-speed inputs (`hwInputs`, `bindHw`, `hwPeak`, `hwBw`).
+- `measured.js`: `window.MEASURED`, values from the user's runs with their conditions, and `measuredTable(chapter, m)`.
+- `chapters/<id>.js`: one file per chapter. It registers `window.CHAPTERS[id] = { render(ctx) → HTML, mount(root, ctx, rerender) }`, where `ctx = { m, mem (bytes), gpus, width }`. Its `<script>` tag goes in index.html before app.js.
+- `app.js`: `OUTLINE` (all chapters in order), the top bar, the chapter list, URL-hash state (`ch`, `model`, `mem`, `gpus`; unknown values fall back to defaults), ← → between chapters.
+- `PLAN.md`: chapters, models, measured values, formula fixes, order of work.
 
 ## Modelling conventions (in calc.js)
 
-- **Rank order**, innermost first: TP, CP, DP, PP. A group inside one node (`perNode` GPUs) uses NVLink; otherwise the NIC. `validate()` warns when TP spans nodes. Collective volumes use ring algorithms (all-reduce 2(n−1)/n·M; all-gather, reduce-scatter and all-to-all (n−1)/n·M). Times are volume ÷ nominal per-direction bandwidth, with no overlap.
-- **Training precision:**
-  - BF16 weights, FP32 gradient buffer, FP32 master weights.
-  - FP32 AdamW moments, unless the model sets `trainPrecision` (DeepSeek-V3 uses BF16 moments, per its report).
-  - ZeRO-1/2/3 shard the optimizer states / + gradients / + weights over the DP×CP group. For experts, the group is the expert-DP group.
-- **Experts:** split over EP when ep > 1, otherwise TP-split.
-  - The EP all-to-all volume assumes each routed copy is sent separately in BF16 (an overestimate for node-limited routing).
-- **Estimates:** activations and runtime reserve are flagged `approx` and rendered with ≈.
+- **Bytes:** decimal units (1 GB = 10⁹ B), so parameters × bytes per parameter reads directly in GB. Measured values keep their original unit next to the conversion.
+- **Parameters:**
+  - `total` = language model + vision encoder, excluding multi-token-prediction modules; publishers' headline counts use this.
+  - `checkpoint` = `total` + MTP (+ MTP copies of the embedding and output matrices when stored).
+  - `active` = parameters used for one text token: everything except unselected routed experts and the vision encoder, with the embedding table counted in full, as DeepSeek and Qwen count it. OpenAI's gpt-oss count leaves the embedding table out; `published.convention` says so.
+  - `matmul` = `active` − embedding table: the N in 2·N FLOPs per token.
+- **Layer types:** `full`, `sliding` (K/V for at most `window` positions), `linear` (Gated DeltaNet: fixed state of valueHeads × keyDim × valueDim per layer, in `stateBytes`; Qwen3.5 keeps it in FP32 per `mamba_ssm_dtype`).
+- **Collectives:** rank order is TP, CP, DP, PP, innermost first. A group of n ranks with r per node spans N = n/r nodes. All-gather and reduce-scatter send (r−1)/r·M inside the node and (N−1)/N·M/r across nodes per GPU; all-reduce twice that; all-to-all sends (n−r)/n·M across nodes. A measured 512 MiB all-reduce on 2 nodes × 4 GPUs (4 × 400 Gb/s NICs per node) took 3.4 ms, 79% of the bandwidth this formula implies; the old per-GPU-NIC formula was 5.5× slower than measured.
+- **Examples that aren't computed** (which experts an example token selects, sample text) are labelled illustrative on the page.
 
 ## Adding a model
 
-Append to `window.MODELS` using values from the published `config.json`, citing the URL in `source`. Every entry needs a `why` naming the technique or scale it demonstrates; the user removed non-distinctive models. Check that `params(m).total` (and `.active` for MoE) matches the published count. Give it presets that fit in HBM, and mark which preset values are published. Never branch on a model id; extend the config fields and the branches in calc.js and `buildStages` instead.
+1. Append to `window.MODELS` using values from the published `config.json`, and cite its URL in `source`.
+2. Give it a `why` naming the technique or scale it shows; the user removed non-distinctive models.
+3. Set `checkpoint.params` to the count from `https://huggingface.co/api/models/<repo>` (its `safetensors.total`). `params(m).checkpoint` must equal it, minus non-parameter buffers stored in the checkpoint (`checkpoint.buffers`, e.g. GPT-2's causal masks). If it doesn't, a structural field is missing.
+4. Record the authors' headline counts and their convention in `published`, and the published weights' dtypes in `release`.
+
+Never branch on a model id; extend the config fields and calc.js instead.
+
+## Measured values
+
+Measured numbers come from the user's runs and must state their conditions: software versions, GPU type and count, precision. This repository is public. Never include job IDs, node names, host names, IP addresses, account names, internal paths, or allocation and quota figures.
 
 ## Checking a change
 
-Open `index.html`. Go through every model × phase (both inference steps) × lens, step with Prev / Next in the data flow, and check the console for errors. Confirm that presets fit in HBM.
+Open `index.html`. Go through every chapter × every model, use each control, and check the console for errors and for NaN or undefined in the text. Check a 390 px wide viewport (no horizontal page scroll; wide tables scroll inside themselves). Confirm parameter counts against `checkpoint.params`. A model with a short context (GPT-2, 1,024 tokens) must still give every length menu at least one option.

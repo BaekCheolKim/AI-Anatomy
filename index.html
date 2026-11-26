@@ -3,33 +3,69 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AI-Anatomy: model × phase × lens</title>
+  <title>AI-Anatomy</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <nav id="models" aria-label="Model"></nav>
-
-  <header>
-    <h1>AI-Anatomy</h1>
-    <p id="model-line"></p>
-    <div id="controls"></div>
-    <div class="stepper" id="stepper">
-      <button id="prev">◀ Prev</button>
-      <span id="step-label"></span>
-      <button id="next">Next ▶</button>
+  <header class="bar">
+    <a class="brand" href="#" data-home>AI-Anatomy</a>
+    <nav id="models" class="models" aria-label="Model"></nav>
+    <div class="hw">
+      <label>GPU memory <input id="mem" type="number" min="1" step="1" list="mem-sizes" inputmode="numeric"> GB</label>
+      <label>GPUs <input id="gpus" type="number" min="1" step="1" inputmode="numeric"></label>
+      <datalist id="mem-sizes">
+        <option value="16"></option><option value="24"></option><option value="32"></option><option value="48"></option>
+        <option value="80"></option><option value="96"></option><option value="141"></option><option value="192"></option><option value="288"></option>
+      </datalist>
     </div>
   </header>
 
-  <main>
-    <div id="view"></div>
-    <aside id="panel"></aside>
-  </main>
+  <div class="page">
+    <details id="tocwrap" open><summary>Chapters</summary><nav id="toc" aria-label="Chapters"></nav></details>
+    <main id="chapter"></main>
+  </div>
 
-  <!-- Data: hardware.js, models.js, techniques.js. Numbers: calc.js. Views: app.js. -->
-  <script src="hardware.js"></script>
+  <footer class="foot">
+    <p>How large AI models are trained, served and run, computed from each model's published configuration. Numbers are parameter counts, bytes and FLOPs, so they apply to any hardware; GPU memory and GPU count at the top are the only hardware inputs.</p>
+    <p>The order of topics follows Andrej Karpathy's video <a href="https://www.youtube.com/watch?v=7xTGNNLPyMI" target="_blank" rel="noreferrer">Deep Dive into LLMs like ChatGPT</a> (2025), extended with model architectures, ways to run models and other model families. Text and figures on this page are original.</p>
+  </footer>
+
+  <!-- Data: models.js. Numbers: calc.js. Figure helpers: figures.js. Chapters: chapters/*.js. Frame: app.js. -->
   <script src="models.js"></script>
-  <script src="techniques.js"></script>
   <script src="calc.js"></script>
+  <script src="figures.js"></script>
+  <script src="measured.js"></script>
+  <script src="chapters/overview.js"></script>
+  <script src="chapters/data.js"></script>
+  <script src="chapters/tokenization.js"></script>
+  <script src="chapters/io.js"></script>
+  <script src="chapters/network.js"></script>
+  <script src="chapters/attention.js"></script>
+  <script src="chapters/moe.js"></script>
+  <script src="chapters/images.js"></script>
+  <script src="chapters/training.js"></script>
+  <script src="chapters/scaling.js"></script>
+  <script src="chapters/long-context.js"></script>
+  <script src="chapters/parallel.js"></script>
+  <script src="chapters/sampling.js"></script>
+  <script src="chapters/chat.js"></script>
+  <script src="chapters/lora.js"></script>
+  <script src="chapters/distillation.js"></script>
+  <script src="chapters/context.js"></script>
+  <script src="chapters/rl.js"></script>
+  <script src="chapters/rl-gpus.js"></script>
+  <script src="chapters/preferences.js"></script>
+  <script src="chapters/prefill-decode.js"></script>
+  <script src="chapters/kv-cache.js"></script>
+  <script src="chapters/precision.js"></script>
+  <script src="chapters/fit.js"></script>
+  <script src="chapters/engines.js"></script>
+  <script src="chapters/serving.js"></script>
+  <script src="chapters/request.js"></script>
+  <script src="chapters/agents.js"></script>
+  <script src="chapters/embeddings.js"></script>
+  <script src="chapters/diffusion.js"></script>
+  <script src="chapters/speech.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

@@ -1,137 +1,221 @@
-// Model families and models. Every config value comes from the model's published config.json
-// (or paper, where noted in `sources`). app.js and calc.js build the page from these fields only.
+// Models. Every architecture value comes from the model's published config.json (`source`).
+// calc.js and the chapters build every number from these fields; nothing branches on a model id.
 //
-// attention.kind: 'MHA' | 'GQA' | 'MLA'      attention.bias: 'none' | 'qkv' | 'all'
-// ffn.kind:       'dense' | 'moe'             ffn.act: 'silu' | 'gelu'   ffn.gated: SwiGLU-style gate
-// position:       'learned' | 'rope'          norm: 'LayerNorm' | 'RMSNorm'
-// why:            the technique or scale this model is included to show
-// presets:        a parallel layout + workload per phase; `note` says which values are published
-// trainPrecision: overrides of the default mixed-precision layout (see calc.js TRAIN_BYTES)
+// attention.kind  'MHA' | 'GQA' | 'MLA'           attention.bias  'none' | 'qkv' | 'all'
+// attention.qkNorm      RMSNorm on each query and key head (2 · headDim parameters per layer)
+// attention.outputGate  q_proj also produces a sigmoid gate for the attention output (doubles q_proj)
+// attention.sinks       one learned logit per head added to the softmax denominator
+// attention.window      positions a 'sliding' layer attends to
+// layerTypes            per layer: 'full' | 'sliding' | 'linear' (default: all 'full')
+// linearAttention       Gated DeltaNet: key/value heads and dims, causal-conv width, state dtype bytes
+// ffn.kind 'dense' | 'moe'; ffn.router: 'softmax-topk' | 'topk-softmax' | 'sigmoid-grouped'
+// mtp                   multi-token-prediction modules stored in the checkpoint (not part of `total`)
+// vision                ViT encoder whose output tokens enter the language model
+// release               dtypes of the published weights, by tensor class (see calc.js weightClasses)
+// checkpoint            safetensors element count reported by Hugging Face, and what it includes;
+//                       params(m).checkpoint must equal it (minus stored non-parameter buffers)
+// published             headline counts as the authors state them, with their convention
 
-window.FAMILIES = [
-  { id: 'llm', title: 'Decoder-only LLM', status: 'ready' },
-  {
-    id: 'vit', title: 'Vision Transformer (ViT)', status: 'template',
-    outline: [
-      ['input', 'Image (H × W × 3)'], ['input', 'Patchify (P × P patches)'], ['input', 'Linear patch embedding'],
-      ['input', '[CLS] token + position embedding'], ['layer', 'LayerNorm'], ['layer', 'Bidirectional self-attention (no causal mask)'],
-      ['layer', 'Residual add'], ['layer', 'LayerNorm'], ['layer', 'MLP (GELU)'], ['layer', 'Residual add'],
-      ['output', 'Final LayerNorm'], ['output', 'Classification head on [CLS]'], ['output', 'Softmax over classes'],
-    ],
-  },
-  {
-    id: 'diffusion', title: 'Latent diffusion (U-Net / DiT)', status: 'template',
-    outline: [
-      ['input', 'Text prompt → text encoder → condition embeddings'], ['input', 'Gaussian noise latent z_T (inference) / VAE encoder → z₀ (training)'],
-      ['input', 'Timestep embedding t'], ['layer', 'Denoiser block: self-attention over latent patches'],
-      ['layer', 'Cross-attention to condition embeddings'], ['layer', 'MLP / ResNet block, modulated by t'],
-      ['output', 'Predicted noise ε (or velocity v)'], ['output', 'Scheduler update z_t → z_(t−1), repeated for N steps'],
-      ['output', 'VAE decoder → image'],
-    ],
-  },
-  {
-    id: 'multimodal', title: 'Multimodal (vision encoder + LLM)', status: 'template',
-    outline: [
-      ['input', 'Image → vision encoder (ViT) → patch features'], ['input', 'Projector (MLP) → visual tokens in LLM width H'],
-      ['input', 'Text → tokenizer → token embeddings'], ['input', 'Interleaved sequence: visual tokens + text tokens'],
-      ['layer', 'Decoder layer × L: causal self-attention over the joint sequence'], ['layer', 'FFN (dense or MoE)'],
-      ['output', 'LM head → logits'], ['output', 'Softmax → next text token'],
-    ],
-  },
-];
+const pattern = (unit, times) => Array.from({ length: times }, () => unit).flat();
 
 const LLAMA3_PAPER = 'https://arxiv.org/abs/2407.21783';
+const LLAMA2_PAPER = 'https://arxiv.org/abs/2307.09288';
 const DSV3_PAPER = 'https://arxiv.org/abs/2412.19437';
+const LLAMA31_CARD = 'https://huggingface.co/meta-llama/Llama-3.1-405B';
 
 window.MODELS = [
   {
-    id: 'llama-3.1-8b', family: 'llm',
-    name: 'Llama 3.1 8B', org: 'Meta', year: 2024,
-    why: 'Widely deployed open-weight dense model. 16 GB of BF16 weights fit one GPU, so single-GPU memory and bandwidth limits appear without any parallelism.',
+    id: 'gpt-2', name: 'GPT-2 1.5B', short: 'GPT-2', org: 'OpenAI', year: 2019,
+    postTraining: { text: 'None: released as a base model.' },
+    why: 'The 2019 design that later models modify: multi-head attention, learned position embeddings, LayerNorm, a GELU MLP, and one matrix shared by the input embedding and the output layer.',
+    source: 'https://huggingface.co/openai-community/gpt2-xl/blob/main/config.json',
+    checkpoint: { params: 1607942848, buffers: 48 * 1024 * 1024,
+      note: 'The checkpoint also stores a 1,024 × 1,024 causal-mask buffer per layer (50,331,648 values); these are not parameters.' },
+    published: { text: '1.5B parameters', total: 1.5e9 },
+    layouts: { training: { dp: 8, tp: 1, pp: 1, ep: 1, cp: 1, gpusPerNode: 8, zero: 0, recompute: 'none', seq: 1024, mbs: 16, gbs: 512, example: true,
+      text: 'Example layout: 8 GPUs, data parallel only, 512 sequences of 1,024 tokens per step.' } },
+    layers: 48, hidden: 1600, vocab: 50257, context: 1024, tied: true,
+    attention: { kind: 'MHA', heads: 25, kvHeads: 25, headDim: 64, bias: 'all' },
+    ffn: { kind: 'dense', inter: 6400, act: 'gelu', gated: false, bias: true },
+    position: 'learned', norm: 'LayerNorm', normEps: 1e-5,
+    tokenizer: 'byte-level BPE', chat: null,
+    release: { all: 'fp32' },
+  },
+  {
+    id: 'llama-3.1-8b', name: 'Llama 3.1 8B', short: 'Llama 3.1 8B', org: 'Meta', year: 2024,
+    postTraining: { text: 'Several rounds of supervised fine-tuning, rejection sampling and DPO (Llama 3 paper, section 4).', url: LLAMA3_PAPER, methods: ['sft', 'dpo'] },
+    why: 'Dense model with grouped-query attention; 16 GB of weights in BF16. An MLPerf Training benchmark.',
     source: 'https://huggingface.co/meta-llama/Llama-3.1-8B/blob/main/config.json',
-    layers: 32, hidden: 4096, vocab: 128256, context: 131072,
+    checkpoint: { params: 8030261248 },
+    published: { text: '8B parameters', total: 8e9 },
+    layouts: { training: { dp: 8, tp: 1, pp: 1, ep: 1, cp: 1, gpusPerNode: 8, zero: 1, recompute: 'none', seq: 8192, mbs: 1, gbs: 64, example: true,
+      text: 'Example layout: 8 GPUs in one node, data parallel with ZeRO-1.' } },
+    training: { tokens: 15e12, text: 'about 15 trillion tokens', url: LLAMA3_PAPER,
+      gpuHours: 1.46e6, gpu: 'H100 80GB', gpuHoursText: '1.46M GPU hours (Llama 3.1 model card)', gpuHoursUrl: LLAMA31_CARD },
+    layers: 32, hidden: 4096, vocab: 128256, context: 131072, tied: false,
     attention: { kind: 'GQA', heads: 32, kvHeads: 8, headDim: 128, bias: 'none' },
     ffn: { kind: 'dense', inter: 14336, act: 'silu', gated: true, bias: false },
-    position: 'rope', ropeTheta: 500000, norm: 'RMSNorm', normEps: 1e-5, tied: false,
-    tokenizer: 'byte-level BPE (tiktoken-based)',
-    presets: {
-      training: { dp: 8, tp: 1, pp: 1, ep: 1, cp: 1, zero: 2, recompute: 'full', seq: 8192, mbs: 1, gbs: 64,
-        note: 'Example layout (not published).' },
-      inference: { dp: 1, tp: 1, pp: 1, ep: 1, cp: 1, batch: 16, prompt: 2048, output: 512, wdtype: 'bf16',
-        note: 'Example layout: one GPU.' },
-    },
+    position: 'rope', ropeTheta: 500000, norm: 'RMSNorm', normEps: 1e-5,
+    ropeScaling: { type: 'llama3', factor: 8, lowFreqFactor: 1, highFreqFactor: 4, original: 8192 },
+    tokenizer: 'byte-level BPE (tiktoken-based)', chat: 'llama3',
+    release: { all: 'bf16' },
   },
   {
-    id: 'llama-3.1-70b', family: 'llm',
-    name: 'Llama 3.1 70B', org: 'Meta', year: 2024,
-    why: 'Widely deployed open-weight dense model. 141 GB of BF16 weights exceed one GPU\'s HBM, so inference needs tensor parallelism inside a node.',
-    source: 'https://huggingface.co/meta-llama/Llama-3.1-70B/blob/main/config.json',
-    layers: 80, hidden: 8192, vocab: 128256, context: 131072,
+    id: 'llama-2-70b', name: 'Llama 2 70B', short: 'Llama 2 70B', org: 'Meta', year: 2023,
+    postTraining: { text: 'Llama-2-chat: supervised fine-tuning, then RLHF with rejection sampling and PPO against separate helpfulness and safety reward models (Llama 2 paper). Llama 2 70B itself is the base model.', url: LLAMA2_PAPER, methods: ['sft', 'ppo'] },
+    why: 'Dense model used for parameter-efficient fine-tuning (LoRA) in MLPerf Training.',
+    source: 'https://huggingface.co/meta-llama/Llama-2-70b-hf/blob/main/config.json',
+    sourceNote: 'Gated repository. Values from the Llama 2 paper; the checkpoint count matches them exactly.',
+    checkpoint: { params: 68976653312, buffers: 80 * 64, note: 'Includes 64 rotary inverse frequencies per layer (5,120 values), which are not parameters.' },
+    published: { text: '70B parameters', total: 70e9, url: LLAMA2_PAPER },
+    layouts: { training: { dp: 4, tp: 8, pp: 2, ep: 1, cp: 1, gpusPerNode: 8, zero: 1, recompute: 'full', seq: 4096, mbs: 1, gbs: 64, example: true,
+      text: 'Example layout: 64 GPUs, TP 8 inside a node, PP 2, DP 4.' } },
+    training: { tokens: 2e12, text: '2 trillion tokens', url: LLAMA2_PAPER,
+      gpuHours: 1720320, gpu: 'A100 80GB', gpuHoursText: '1,720,320 GPU hours (Llama 2 paper, Table 2)', gpuHoursUrl: LLAMA2_PAPER },
+    layers: 80, hidden: 8192, vocab: 32000, context: 4096, tied: false,
     attention: { kind: 'GQA', heads: 64, kvHeads: 8, headDim: 128, bias: 'none' },
     ffn: { kind: 'dense', inter: 28672, act: 'silu', gated: true, bias: false },
-    position: 'rope', ropeTheta: 500000, norm: 'RMSNorm', normEps: 1e-5, tied: false,
-    tokenizer: 'byte-level BPE (tiktoken-based)',
-    presets: {
-      training: { dp: 4, tp: 4, pp: 4, ep: 1, cp: 1, zero: 1, recompute: 'full', seq: 8192, mbs: 1, gbs: 128,
-        note: 'Example layout (not published): 64 GPUs, TP 4 inside a node, PP 4 and DP 4 across nodes.' },
-      inference: { dp: 1, tp: 4, pp: 1, ep: 1, cp: 1, batch: 32, prompt: 2048, output: 512, wdtype: 'bf16',
-        note: 'Example layout: TP 4 inside one node.' },
-    },
+    position: 'rope', ropeTheta: 10000, norm: 'RMSNorm', normEps: 1e-5,
+    tokenizer: 'SentencePiece BPE', chat: 'llama2',
+    release: { all: 'fp16' },
   },
   {
-    id: 'llama-3.1-405b', family: 'llm',
-    name: 'Llama 3.1 405B', org: 'Meta', year: 2024,
-    why: 'Largest dense open-weight model: 811 GB of BF16 weights, more than the HBM of one node. Pre-trained on 16,384 H100 GPUs with 4D parallelism (TP, CP, PP, DP).',
+    id: 'llama-3.1-405b', name: 'Llama 3.1 405B', short: 'Llama 3.1 405B', org: 'Meta', year: 2024,
+    postTraining: { text: 'Several rounds of supervised fine-tuning, rejection sampling and DPO (Llama 3 paper, section 4).', url: LLAMA3_PAPER, methods: ['sft', 'dpo'] },
+    why: 'Largest dense open-weight model: 811 GB of weights in BF16. Pre-trained on 15.6T tokens with four parallel dimensions (TP, CP, PP, DP).',
     source: 'https://huggingface.co/meta-llama/Llama-3.1-405B/blob/main/config.json',
-    sourceNote: 'Architecture from the Llama 3 paper, Table 3 (8 KV heads). Some redistributed checkpoints duplicate KV heads to 16 for 16-way TP.',
-    layers: 126, hidden: 16384, vocab: 128256, context: 131072,
+    sourceNote: 'Architecture from the Llama 3 paper, Table 3 (8 KV heads).',
+    checkpoint: { params: 405853388800 },
+    published: { text: '405B parameters', total: 405e9, url: LLAMA3_PAPER },
+    training: { tokens: 15.6e12, text: '15.6 trillion tokens', url: LLAMA3_PAPER, flops: 3.8e25, flopsText: '3.8 × 10²⁵ FLOPs (Llama 3 paper)',
+      gpuHours: 30.84e6, gpu: 'H100 80GB', gpuHoursText: '30.84M GPU hours (Llama 3.1 model card)', gpuHoursUrl: LLAMA31_CARD },
+    layouts: {
+      training: { dp: 128, tp: 8, pp: 16, ep: 1, cp: 1, gpusPerNode: 8, zero: 1, recompute: 'full', seq: 8192, mbs: 1, gbs: 2048,
+        text: 'Published (Llama 3 paper, Table 4): 16,384 GPUs in 8-GPU nodes, TP 8 × CP 1 × PP 16 × DP 128, sequence 8,192, 16 sequences per DP rank. ZeRO stage, recomputation and micro-batch size are examples.', url: LLAMA3_PAPER },
+    },
+    layers: 126, hidden: 16384, vocab: 128256, context: 131072, tied: false,
     attention: { kind: 'GQA', heads: 128, kvHeads: 8, headDim: 128, bias: 'none' },
     ffn: { kind: 'dense', inter: 53248, act: 'silu', gated: true, bias: false },
-    position: 'rope', ropeTheta: 500000, norm: 'RMSNorm', normEps: 1e-5, tied: false,
-    tokenizer: 'byte-level BPE (tiktoken-based)',
-    presets: {
-      training: { dp: 128, tp: 8, pp: 16, ep: 1, cp: 1, zero: 1, recompute: 'full', seq: 8192, mbs: 1, gbs: 2048,
-        note: `Published (Llama 3 paper, Table 4): 16,384 H100 GPUs in 8-GPU nodes, TP 8 × CP 1 × PP 16 × DP 128, sequence 8,192, 16 sequences per DP rank. On 4-GPU GH200 nodes this TP 8 group spans two nodes. Micro-batch size, ZeRO stage and recompute are examples. ${LLAMA3_PAPER}` },
-      inference: { dp: 1, tp: 4, pp: 2, ep: 1, cp: 1, batch: 16, prompt: 2048, output: 512, wdtype: 'fp8',
-        note: 'Example layout: FP8 weights (406 GB), TP 4 inside a node × PP 2 across two nodes.' },
-    },
+    position: 'rope', ropeTheta: 500000, norm: 'RMSNorm', normEps: 1e-5,
+    ropeScaling: { type: 'llama3', factor: 8, lowFreqFactor: 1, highFreqFactor: 4, original: 8192 },
+    longContext: { text: 'Pre-trained at 8K, then the context was raised to 128K in six stages over about 800B tokens (Llama 3 paper, section 3.4.2).', url: LLAMA3_PAPER },
+    tokenizer: 'byte-level BPE (tiktoken-based)', chat: 'llama3',
+    release: { all: 'bf16' },
   },
   {
-    id: 'mixtral-8x7b', family: 'llm',
-    name: 'Mixtral 8x7B', org: 'Mistral AI', year: 2023,
-    why: 'Coarse-grained MoE: 8 large experts, top-2 routing, no shared expert; 47B total / 13B active. Contrast with DeepSeek-V3\'s 256 small experts.',
-    source: 'https://huggingface.co/mistralai/Mixtral-8x7B-v0.1/blob/main/config.json',
-    layers: 32, hidden: 4096, vocab: 32000, context: 32768,
-    attention: { kind: 'GQA', heads: 32, kvHeads: 8, headDim: 128, bias: 'none' },
-    ffn: { kind: 'moe', experts: 8, shared: 0, topK: 2, expertInter: 14336, act: 'silu', gated: true,
-      denseLayers: 0, router: 'softmax', routerBias: false },
-    position: 'rope', ropeTheta: 1000000, norm: 'RMSNorm', normEps: 1e-5, tied: false,
-    tokenizer: 'SentencePiece BPE with byte fallback',
-    presets: {
-      training: { dp: 32, tp: 1, pp: 1, ep: 8, cp: 1, zero: 2, recompute: 'full', seq: 4096, mbs: 1, gbs: 128,
-        note: 'Example layout (not published): 32 GPUs, EP 8 across two nodes, so each expert has 4 DP replicas for ZeRO-2 to shard over.' },
-      inference: { dp: 1, tp: 2, pp: 1, ep: 1, cp: 1, batch: 16, prompt: 2048, output: 512, wdtype: 'bf16',
-        note: 'Example layout: TP 2.' },
-    },
-  },
-  {
-    id: 'deepseek-v3', family: 'llm',
-    name: 'DeepSeek-V3', org: 'DeepSeek', year: 2024,
-    why: 'MoE at scale: 671B total / 37B active, 256 fine-grained routed experts + 1 shared, MLA compressed KV cache, FP8 training. Trained with PP 16 × EP 64 on 2,048 GPUs.',
+    id: 'deepseek-v3', name: 'DeepSeek-V3', short: 'DeepSeek-V3', org: 'DeepSeek', year: 2024,
+    postTraining: { text: 'Supervised fine-tuning on 1.5M instances, including reasoning data generated by DeepSeek-R1 models, then reinforcement learning with GRPO using rule-based and model-based rewards (DeepSeek-V3 report, section 5).', url: DSV3_PAPER, methods: ['sft', 'grpo'] },
+    why: 'MoE with 256 small routed experts and 1 shared expert, multi-head latent attention (a compressed KV cache), multi-token prediction and FP8 training. DeepSeek-R1 was trained from it with reinforcement learning.',
     source: 'https://huggingface.co/deepseek-ai/DeepSeek-V3/blob/main/config.json',
-    layers: 61, hidden: 7168, vocab: 129280, context: 163840,
-    attention: { kind: 'MLA', heads: 128, qRank: 1536, kvRank: 512, nopeDim: 128, ropeDim: 64, vDim: 128 },
-    ffn: { kind: 'moe', experts: 256, shared: 1, topK: 8, expertInter: 2048, act: 'silu', gated: true,
-      denseLayers: 3, denseInter: 18432, router: 'sigmoid', routerBias: true,
-      groups: 8, topkGroups: 4, routedScale: 2.5 },
-    position: 'rope', ropeTheta: 10000, norm: 'RMSNorm', normEps: 1e-6, tied: false,
-    tokenizer: 'byte-level BPE (DeepSeek)',
-    trainPrecision: { moments: 'bf16', note: 'AdamW moments in BF16; master weights and gradients in FP32 (DeepSeek-V3 technical report).' },
-    presets: {
-      training: { dp: 128, tp: 1, pp: 16, ep: 64, cp: 1, zero: 1, recompute: 'full', seq: 4096, mbs: 1, gbs: 15360,
-        note: `Published (DeepSeek-V3 technical report): 2,048 H800 GPUs, PP 16, EP 64 across 8 nodes, ZeRO-1 DP; sequence 4K; batch up to 15,360. GH200 96GB used here in place of H800. The report recomputes RMSNorm and MLA up-projections selectively; full recompute here is the closest available option. ${DSV3_PAPER}` },
-      inference: { dp: 8, tp: 4, pp: 1, ep: 32, cp: 1, batch: 256, prompt: 4096, output: 1024, wdtype: 'fp8',
-        note: `Published prefill unit (DeepSeek-V3 technical report): 32 H800 GPUs, TP 4 with SP, DP 8, EP 32; here 8 nodes of 4 GH200. The decode unit is 320 GPUs (TP 4, DP 80, EP 320). Batch and lengths are examples. ${DSV3_PAPER}` },
+    checkpoint: { params: 684489845504, note: 'Includes the multi-token-prediction module (13.46B), which stores its own copies of the embedding and output matrices.' },
+    published: { text: '671B total parameters, 37B activated for each token', total: 671e9, active: 37e9, url: DSV3_PAPER },
+    training: { tokens: 14.8e12, text: '14.8 trillion tokens', url: DSV3_PAPER,
+      gpuHours: 2.664e6, gpu: 'H800', gpuHoursText: '2.664M GPU hours for pre-training, 2.788M in total with context extension and post-training (DeepSeek-V3 report)', gpuHoursUrl: DSV3_PAPER },
+    layouts: {
+      training: { dp: 128, tp: 1, pp: 16, ep: 64, cp: 1, gpusPerNode: 8, zero: 1, recompute: 'full', seq: 4096, mbs: 1, gbs: 15360,
+        text: 'Published (DeepSeek-V3 report): 2,048 GPUs in 8-GPU nodes, PP 16, EP 64 over 8 nodes, ZeRO-1 data parallelism, sequence 4K, batch up to 15,360 sequences. The report recomputes RMSNorm and the MLA up-projections selectively and keeps some activations in FP8; full recomputation is used here as the closest available option.', url: DSV3_PAPER },
+      prefill: { tp: 4, dp: 8, ep: 32, gpus: 32, text: 'DeepSeek-V3 report: prefill unit of 32 GPUs, attention TP 4 with SP and DP 8, experts EP 32.', url: DSV3_PAPER },
+      decode: { tp: 4, dp: 80, ep: 320, gpus: 320, text: 'DeepSeek-V3 report: decode unit of 320 GPUs, attention TP 4 with SP and DP 80, experts EP 320.', url: DSV3_PAPER },
     },
+    layers: 61, hidden: 7168, vocab: 129280, context: 163840, tied: false,
+    attention: { kind: 'MLA', heads: 128, qRank: 1536, kvRank: 512, nopeDim: 128, ropeDim: 64, vDim: 128 },
+    ffn: { kind: 'moe', experts: 256, topK: 8, shared: 1, expertInter: 2048, act: 'silu', gated: true,
+      denseLayers: 3, denseInter: 18432, router: 'sigmoid-grouped', routerBias: true, expertBias: false,
+      groups: 8, topkGroups: 4, routedScale: 2.5 },
+    mtp: { layers: 1, ownEmbedding: true },
+    position: 'rope', ropeTheta: 10000, norm: 'RMSNorm', normEps: 1e-6,
+    ropeScaling: { type: 'yarn', factor: 40, original: 4096, betaFast: 32, betaSlow: 1 },
+    longContext: { text: 'Pre-trained at 4K, then extended with YaRN in two stages, to 32K and to 128K (DeepSeek-V3 report, section 4.3).', url: DSV3_PAPER },
+    tokenizer: 'byte-level BPE', chat: 'deepseek',
+    trainPrecision: { moments: 'bf16', note: 'AdamW moments in BF16; master weights and gradients in FP32 (DeepSeek-V3 report).' },
+    release: { experts: 'fp8', linear: 'fp8' },
+  },
+  {
+    id: 'qwen3-vl-235b', name: 'Qwen3-VL-235B-A22B', short: 'Qwen3-VL', org: 'Alibaba Qwen', year: 2025,
+    postTraining: { text: 'Released in Instruct and Thinking editions; the model card gives no further detail.' },
+    why: 'Vision-language MoE: a ViT encoder turns images into tokens for a 94-layer language model with 128 experts, 8 per token.',
+    source: 'https://huggingface.co/Qwen/Qwen3-VL-235B-A22B-Instruct/blob/main/config.json',
+    checkpoint: { params: 235670022896, note: 'Language model 235.09B + vision encoder 0.58B.' },
+    published: { text: '235B total, 22B activated (A22B, in the name)', total: 235e9, active: 22e9 },
+    layouts: { training: { dp: 8, tp: 4, pp: 4, ep: 8, cp: 1, gpusPerNode: 8, zero: 1, recompute: 'full', seq: 8192, mbs: 1, gbs: 256, example: true,
+      text: 'Example layout: 128 GPUs, TP 4, PP 4, EP 8, DP 8.' } },
+    layers: 94, hidden: 4096, vocab: 151936, context: 262144, tied: false,
+    attention: { kind: 'GQA', heads: 64, kvHeads: 4, headDim: 128, bias: 'none', qkNorm: true },
+    ffn: { kind: 'moe', experts: 128, topK: 8, shared: 0, expertInter: 1536, act: 'silu', gated: true,
+      denseLayers: 0, router: 'softmax-topk', normTopK: true, routerBias: false, expertBias: false },
+    vision: { layers: 27, hidden: 1152, inter: 4304, heads: 16, patch: 16, temporalPatch: 2, merge: 2,
+      channels: 3, posEmbed: 2304, outHidden: 4096, deepstack: 3 },
+    position: 'rope', ropeTheta: 5000000, norm: 'RMSNorm', normEps: 1e-6,
+    tokenizer: 'byte-level BPE', chat: 'chatml',
+    release: { all: 'bf16' },
+  },
+  {
+    id: 'qwen3.5-397b', name: 'Qwen3.5-397B-A17B', short: 'Qwen3.5', org: 'Alibaba Qwen',
+    postTraining: { text: 'Pre-training and post-training; the model card names reinforcement learning scaled across many agent environments.', url: 'https://huggingface.co/Qwen/Qwen3.5-397B-A17B', methods: ['rl'] },
+    why: 'Hybrid layers: 45 Gated DeltaNet layers (linear attention with a fixed-size state) and 15 gated full-attention layers. 512 experts, 10 routed + 1 shared per token; multi-token prediction; image input.',
+    source: 'https://huggingface.co/Qwen/Qwen3.5-397B-A17B/blob/main/config.json',
+    checkpoint: { params: 403397928944, note: 'Language model 396.35B + vision encoder 0.46B + multi-token-prediction module 6.60B.' },
+    published: { text: '397B in total and 17B activated', total: 397e9, active: 17e9, url: 'https://huggingface.co/Qwen/Qwen3.5-397B-A17B' },
+    layouts: { training: { dp: 4, tp: 8, pp: 8, ep: 32, cp: 1, gpusPerNode: 8, zero: 1, recompute: 'full', seq: 8192, mbs: 1, gbs: 64, example: true,
+      text: 'Parallel degrees of the NeMo-RL v0.8.0 GRPO recipe for this model (grpo-qwen3.5-397ba17b-32n8g-megatron.v2): 32 nodes × 8 GPUs, TP 8, PP 8, EP 32, sequence parallelism, activation recomputation. Batch values are examples.' } },
+    layers: 60, hidden: 4096, vocab: 248320, context: 262144, tied: false,
+    layerTypes: pattern(['linear', 'linear', 'linear', 'full'], 15),
+    attention: { kind: 'GQA', heads: 32, kvHeads: 2, headDim: 256, bias: 'none', qkNorm: true, outputGate: true },
+    linearAttention: { kind: 'Gated DeltaNet', keyHeads: 16, valueHeads: 64, keyDim: 128, valueDim: 128, conv: 4, stateBytes: 4 },
+    ffn: { kind: 'moe', experts: 512, topK: 10, shared: 1, expertInter: 1024, sharedInter: 1024, sharedGate: true,
+      act: 'silu', gated: true, denseLayers: 0, router: 'softmax-topk', routerBias: false, expertBias: false },
+    mtp: { layers: 1, ownEmbedding: false },
+    vision: { layers: 27, hidden: 1152, inter: 4304, heads: 16, patch: 16, temporalPatch: 2, merge: 2,
+      channels: 3, posEmbed: 2304, outHidden: 4096, deepstack: 0 },
+    position: 'rope', ropeTheta: 10000000, ropeFraction: 0.25, mrope: true, norm: 'RMSNorm', normEps: 1e-6,
+    tokenizer: 'byte-level BPE', chat: 'chatml',
+    release: { all: 'bf16' },
+  },
+  {
+    id: 'gpt-oss-120b', name: 'gpt-oss-120b', short: 'gpt-oss', org: 'OpenAI', year: 2025,
+    postTraining: { text: 'OpenAI describes a process similar to o4-mini: supervised fine-tuning and a high-compute reinforcement-learning stage, trained on the harmony format.', url: 'https://openai.com/index/introducing-gpt-oss/', methods: ['sft', 'rl'] },
+    why: '128 experts stored in 4-bit MXFP4, 65 GB of weights in total. Layers alternate between 128-token sliding-window and full attention, with attention sinks. Trained on the harmony chat format, which has separate reasoning and answer channels.',
+    source: 'https://huggingface.co/openai/gpt-oss-120b/blob/main/config.json',
+    checkpoint: { params: 116829156672 },
+    published: { text: '117B parameters with 5.1B active parameters', total: 117e9, active: 5.1e9,
+      convention: 'OpenAI\'s active count leaves out the 0.58B-parameter embedding table.', url: 'https://huggingface.co/openai/gpt-oss-120b' },
+    layouts: { training: { dp: 8, tp: 1, pp: 1, ep: 8, cp: 1, gpusPerNode: 8, zero: 1, recompute: 'full', seq: 8192, mbs: 1, gbs: 64, example: true,
+      text: 'Example layout: 8 GPUs in one node, EP 8, data parallel with ZeRO-1.' } },
+    layers: 36, hidden: 2880, vocab: 201088, context: 131072, tied: false,
+    layerTypes: pattern(['sliding', 'full'], 18),
+    attention: { kind: 'GQA', heads: 64, kvHeads: 8, headDim: 64, bias: 'all', sinks: true, window: 128 },
+    ffn: { kind: 'moe', experts: 128, topK: 4, shared: 0, expertInter: 2880, act: 'silu', gated: true, swigluLimit: 7,
+      denseLayers: 0, router: 'topk-softmax', routerBias: true, expertBias: true },
+    position: 'rope', ropeTheta: 150000, norm: 'RMSNorm', normEps: 1e-5,
+    ropeScaling: { type: 'yarn', factor: 32, original: 4096, betaFast: 32, betaSlow: 1 },
+    tokenizer: 'byte-level BPE (o200k_harmony)', chat: 'harmony',
+    release: { experts: 'mxfp4' },
   },
 ];
+
+// Models of other families, used in their own chapters (not in the model bar). Counts checked against
+// the Hugging Face safetensors metadata, like the language models above.
+window.OTHER_MODELS = {
+  embedding: {
+    id: 'qwen3-embedding-8b', name: 'Qwen3-Embedding-8B', org: 'Alibaba Qwen',
+    source: 'https://huggingface.co/Qwen/Qwen3-Embedding-8B/blob/main/config.json', checkpoint: 7567295488,
+    card: 'https://huggingface.co/Qwen/Qwen3-Embedding-8B',
+    // A Qwen3 decoder without the output layer: the hidden state of the last token is the embedding.
+    llm: { layers: 36, hidden: 4096, vocab: 151665, context: 40960, tied: false, noHead: true,
+      attention: { kind: 'GQA', heads: 32, kvHeads: 8, headDim: 128, bias: 'none', qkNorm: true },
+      ffn: { kind: 'dense', inter: 12288, act: 'silu', gated: true, bias: false }, position: 'rope', norm: 'RMSNorm' },
+    dims: 4096, minDims: 32, maxLen: 32768,
+  },
+  diffusion: {
+    id: 'flux.1-schnell', name: 'FLUX.1 [schnell]', org: 'Black Forest Labs',
+    source: 'https://huggingface.co/black-forest-labs/FLUX.1-schnell', checkpoint: 11891178560,
+    sourceNote: 'Configs are gated; the architecture below (diffusers FluxTransformer2DModel) reproduces the checkpoint count exactly.',
+    transformer: { double: 19, single: 38, heads: 24, headDim: 128, inChannels: 64, jointDim: 4096, pooledDim: 768, mlpRatio: 4 },
+    latentChannels: 16, vaeDown: 8, patch: 2, textTokens: 256, steps: 4,
+  },
+  speech: {
+    id: 'whisper-large-v3', name: 'Whisper large-v3', org: 'OpenAI',
+    source: 'https://huggingface.co/openai/whisper-large-v3/blob/main/config.json', checkpoint: 1543490560,
+    d: 1280, encLayers: 32, decLayers: 32, heads: 20, ffn: 5120, mels: 128, vocab: 51866, srcPositions: 1500, tgtPositions: 448,
+  },
+};

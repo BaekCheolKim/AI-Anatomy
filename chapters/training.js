@@ -39,7 +39,7 @@
       ${figure(s, W, 44, 'bytes per parameter')}
       <p class="caption legend">${legend}</p>
       <p class="status">${b.total} bytes per parameter × ${fmtParams(P.total)} parameters = <b>${fmtBytes(total)}</b> of training state for ${esc(m.name)}, before activations. That fills at least ${fmtN(minGPUs)} GPU${minGPUs > 1 ? 's' : ''} of ${fmtBytes(ctx.mem)}. Sharded evenly over the ${fmtN(ctx.gpus)} GPU${ctx.gpus > 1 ? 's' : ''} set at the top (ZeRO-3 / FSDP), each holds ${fmtBytes(per)}${per > ctx.mem ? ` (${fmtBytes(per - ctx.mem)} more than GPU memory)` : ''}.</p>
-      <p class="caption">Mixed precision as in Megatron-LM: the forward and backward passes use BF16 weights; gradients accumulate in FP32; the optimizer updates an FP32 master copy and writes it back to BF16.${m.trainPrecision ? ` ${esc(m.trainPrecision.note)}` : ''} Muon keeps one momentum buffer per parameter instead of AdamW's two moments (used for Kimi K2).</p>`;
+      <p class="caption">Mixed precision as in Megatron-LM: the forward and backward passes use BF16 weights; gradients accumulate in FP32; the optimizer updates an FP32 master copy and writes it back to BF16.${m.trainPrecision ? ` ${esc(m.trainPrecision.note)}` : ''} Muon keeps one momentum buffer for each parameter of the 2-D weight matrices instead of AdamW's two moments; embeddings, the output layer and norm gains still use AdamW (Moonlight). Kimi K2 was pre-trained with MuonClip, Muon with QK-clip. The Muon option here counts one state for every parameter.</p>`;
   }
 
   function figActivations(m, ctx, W) {
@@ -68,7 +68,7 @@
         <td>${tr.flopsText ? esc(tr.flopsText) : '—'}</td><td>${tr.gpuHours ? `${fmtN(tr.gpuHours)} ${esc(tr.gpu)} GPU h` : '—'}</td><td class="r">${ach ? `${fmtSig(ach / 1e12)} TFLOP/s` : '—'}</td></tr>`;
     }).join('');
     return `<table class="data"><thead><tr><th>model</th><th class="r">tokens</th><th class="r">6·N·D FLOPs</th><th>published compute</th><th>published GPU hours</th><th class="r">FLOP/s per GPU</th></tr></thead><tbody>${rows}</tbody></table>
-      <p class="caption">6·N·D: 6 FLOPs per multiplied weight per token (forward 2, backward 4) × weights used per token (N; active weights for MoE) × training tokens (D). The last column divides it by the published GPU time: the sustained rate per GPU over the whole run, including restarts and evaluation. Compare it with a GPU's peak BF16 or FP8 rate to get the utilization. GPU hours are measured values from the authors; the model and token counts are computed from configs.</p>`;
+      <p class="caption">6·N·D: 6 FLOPs per multiplied weight per token (forward 2, backward 4) × weights used per token (N; active weights for MoE) × training tokens (D). The last column divides it by the published GPU hours: an average rate per GPU. The hours differ in scope: Llama 2, pre-training (Table 2); DeepSeek-V3, pre-training only, 180K H800 GPU hours per trillion tokens × 14.8T, excluding research and ablation runs; Llama 3.1, total GPU time for training each model, not split into pre- and post-training. Compare the rate with a GPU's peak BF16 or FP8 rate to estimate utilization. Parameter counts are computed from config.json; token counts and GPU hours are published values.</p>`;
   }
 
   function render(ctx) {
@@ -82,11 +82,11 @@
       <h2>Saved activations</h2>${figActivations(m, ctx, W)}
       <h2>Compute of whole training runs</h2>${figCompute(m, W)}
       <details class="more"><summary>Formulas</summary><ul class="formulas">
-        <li>AdamW, per parameter w with gradient g: m ← β₁m + (1 − β₁)g; v ← β₂v + (1 − β₂)g²; w ← w − η(m̂ / (√v̂ + ε) + λw), with m̂, v̂ the bias-corrected moments.</li>
+        <li>AdamW, per parameter w with gradient g: m ← β₁m + (1 − β₁)g; v ← β₂v + (1 − β₂)g²; w ← w − η<sub>t</sub>(α·m̂ / (√v̂ + ε) + λw), with m̂, v̂ the bias-corrected moments, α the learning rate and η<sub>t</sub> the schedule multiplier (Loshchilov and Hutter, Algorithm 2).</li>
         <li>Training FLOPs ≈ 6·N·D + attention; with full recomputation 8·N·D.</li>
         <li>ZeRO stages shard over the data-parallel GPUs: 1, optimizer states; 2, also gradients; 3 (FSDP), also weights, which are then gathered layer by layer when used.</li>
       </ul></details>
-      <p class="sources">Sources: <a href="https://arxiv.org/abs/1910.02054" target="_blank" rel="noreferrer">ZeRO</a> · <a href="https://arxiv.org/abs/1711.05101" target="_blank" rel="noreferrer">AdamW</a> · <a href="https://arxiv.org/abs/2407.21783" target="_blank" rel="noreferrer">Llama 3 paper</a> · <a href="https://arxiv.org/abs/2412.19437" target="_blank" rel="noreferrer">DeepSeek-V3 report</a>${tr?.gpuHoursUrl ? ` · <a href="${esc(tr.gpuHoursUrl)}" target="_blank" rel="noreferrer">${esc(m.name)} GPU hours</a>` : ''}.</p>`;
+      <p class="sources">Sources: <a href="https://arxiv.org/abs/1910.02054" target="_blank" rel="noreferrer">ZeRO</a> · <a href="https://arxiv.org/abs/1711.05101" target="_blank" rel="noreferrer">AdamW</a> · <a href="https://arxiv.org/abs/2502.16982" target="_blank" rel="noreferrer">Muon at scale (Moonlight)</a> · <a href="https://arxiv.org/abs/2507.20534" target="_blank" rel="noreferrer">Kimi K2</a> · <a href="https://arxiv.org/abs/2407.21783" target="_blank" rel="noreferrer">Llama 3 paper</a> · <a href="https://arxiv.org/abs/2412.19437" target="_blank" rel="noreferrer">DeepSeek-V3 report</a>${tr?.gpuHoursUrl ? ` · <a href="${esc(tr.gpuHoursUrl)}" target="_blank" rel="noreferrer">${esc(m.name)} GPU hours</a>` : ''}.</p>`;
   }
 
   function mount(root, ctx, rerender) {

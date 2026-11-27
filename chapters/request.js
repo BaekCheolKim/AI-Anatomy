@@ -13,10 +13,10 @@
       ['Sample', 'GPU', 'The last position\'s logits pass through temperature and top-p; with an output schema, tokens that would break it are masked to −∞ first (structured output).'],
       ['Decode loop', 'GPU', `One token per step: ${fmtFlops(2 * P.matmul)} of weight multiplications plus attention over the cache, until an end token or the maximum length.`],
       ['Detokenize and stream', 'CPU', 'Each new token is turned back into text and sent to the client as soon as it is complete (server-sent events), so text appears while the rest is generated.'],
-      ['Free', 'GPU', 'The request\'s cache blocks return to the pool, or stay as cached prefix for later requests.'],
+      ['Free', 'CPU', 'The scheduler returns the request\'s blocks to the free queue of the pool in GPU memory; blocks with a prefix hash keep their contents and can be reused by later requests until they are evicted.'],
     ];
     return `
-      <p class="lead">A chat request passes through software on the CPU and the model on the GPUs. The CPU side turns messages into token IDs, schedules the request and turns generated IDs back into text; the GPU side runs prefill once and decode once per generated token. Time to first token covers everything up to the first sampled token; after that, tokens arrive once per decode step.</p>
+      <p class="lead">A chat request passes through software on the CPU and the model on the GPUs. The CPU side turns messages into token IDs, schedules the request and turns generated IDs back into text; the GPU side runs prefill once, which yields the first token, then one decode step per further token. Time to first token covers everything up to the first sampled token; after that, tokens arrive once per decode step.</p>
       <h2>The path of one request</h2>
       <table class="data ops"><thead><tr><th>#</th><th>step</th><th>runs on</th><th>what happens</th></tr></thead><tbody>
         ${steps.map(([name, where, what], i) => `<tr><td class="n">${i + 1}</td><td><b>${name}</b></td><td>${where}</td><td class="f">${what}</td></tr>`).join('')}</tbody></table>

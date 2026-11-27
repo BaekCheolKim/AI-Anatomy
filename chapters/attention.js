@@ -12,9 +12,10 @@
   function describe(m) {
     const a = m.attention, t = layerTypes(m), full = t.filter((x) => x === 'full').length, perPos = cacheValues(m, 1).perPos;
     const parts = [`<b>${esc(m.name)}</b>: ${VARIANT[a.kind]}`];
-    if (a.kind === 'MLA') parts.push(`It stores ${a.kvRank} + ${a.ropeDim} = ${fmtN(perPos)} values per position per layer, where MHA with ${a.heads} heads of ${a.nopeDim + a.ropeDim} would store ${fmtN(2 * a.heads * (a.nopeDim + a.ropeDim))}.`);
+    if (a.kind === 'MLA') parts.push(`It stores ${a.kvRank} + ${a.ropeDim} = ${fmtN(perPos)} values per position per layer, Caching the keys and values it reconstructs would take ${a.heads} × (${a.nopeDim + a.ropeDim} + ${a.vDim}) = ${fmtN(a.heads * (a.nopeDim + a.ropeDim + a.vDim))} values; MHA with ${a.heads} heads of ${a.vDim}, the DeepSeek-V2 paper's comparison, would store ${fmtN(2 * a.heads * a.vDim)}.`);
     else parts.push(`${a.heads} query heads, ${a.kvHeads} K/V heads of ${a.headDim}: ${fmtN(perPos)} values per position per layer.`);
-    if (t.includes('sliding')) parts.push(`${t.filter((x) => x === 'sliding').length} of its ${m.layers} layers attend only to the last ${a.window} positions, so their cache stops growing at ${a.window} positions. Each head also has a learned sink logit that adds a term to the softmax denominator, so its weights over positions can sum to less than 1.`);
+    if (t.includes('sliding')) parts.push(`${t.filter((x) => x === 'sliding').length} of its ${m.layers} layers attend only to the last ${a.window} positions, so their cache stops growing at ${a.window} positions. `);
+    if (a.sinks) parts.push('In every layer, each attention head has a learned sink logit s that adds e<sup>s</sup> to the softmax denominator, so its weights over positions sum to less than 1.');
     if (t.includes('linear')) {
       const g = m.linearAttention;
       parts.push(`Only ${full} of its ${m.layers} layers use softmax attention with a growing cache. The other ${m.layers - full} are Gated DeltaNet layers: each keeps a state of ${g.valueHeads} × ${g.keyDim} × ${g.valueDim} values per sequence, updated at every token and the same size at any length.`);
@@ -75,7 +76,7 @@
     const c32 = cacheBytes(m, 32768), cmax = cacheBytes(m, m.context);
     return `${figure(s, W, H, 'cache per sequence versus context')}
       <p class="status">${esc(m.name)}: ${fmtBytes(c32.total)} per sequence at 32,768 positions; ${fmtBytes(cmax.total)} at its maximum of ${fmtN(m.context)}${c32.state ? `, of which ${fmtBytes(c32.state)} is the fixed linear-attention state (FP32, per the config)` : ''}. ${cmax.total > ctx.mem ? `One sequence at full length needs more than one GPU of ${fmtBytes(ctx.mem)} for its cache alone.` : `One GPU of ${fmtBytes(ctx.mem)} holds ${Math.floor(ctx.mem / cmax.total)} such full-length sequence caches, before weights.`}</p>
-      <p class="caption">Cache per sequence in BF16 (log–log), whole model, against context length up to each model's maximum. Flat parts: sliding-window or linear-attention layers, which stop growing. The dashed line is the GPU memory set at the top.</p>`;
+      <p class="caption">Cache per sequence (log–log), whole model: keys, values and convolution inputs in BF16, the Qwen3.5 linear-attention state in FP32 (mamba_ssm_dtype), against context length up to each model's maximum. Flat parts: sliding-window or linear-attention layers, which stop growing. The dashed line is the GPU memory set at the top.</p>`;
   }
 
   // ---- figure 3: which positions each variant reads ----
@@ -113,11 +114,11 @@
       <details class="more"><summary>Formulas</summary><ul class="formulas">
         <li>Softmax attention, one head: o<sub>t</sub> = Σ<sub>j ≤ t</sub> softmax<sub>j</sub>(q<sub>t</sub>·k<sub>j</sub> / √d)·v<sub>j</sub>. With a sink logit s: the denominator gets an extra e<sup>s</sup> term.</li>
         <li>GQA: query head i uses K/V head ⌊i·n<sub>kv</sub> / n<sub>q</sub>⌋. Cache per position per layer: 2·n<sub>kv</sub>·d values.</li>
-        <li>MLA: c<sub>KV</sub> = x·W<sub>DKV</sub> (512 values) and k<sub>R</sub> (64) are cached; k = [c<sub>KV</sub>·W<sub>UK</sub>, k<sub>R</sub>], v = c<sub>KV</sub>·W<sub>UV</sub>. In decode, q·k = (q<sub>C</sub>·W<sub>UK</sub>ᵀ)·c<sub>KV</sub> + q<sub>R</sub>·k<sub>R</sub>, so scores are computed against the latent directly.</li>
-        <li>Gated DeltaNet, per value head: S<sub>t</sub> = α<sub>t</sub>·S<sub>t−1</sub>·(I − β<sub>t</sub> k<sub>t</sub>k<sub>t</sub>ᵀ) + β<sub>t</sub> v<sub>t</sub>k<sub>t</sub>ᵀ, o<sub>t</sub> = S<sub>t</sub> q<sub>t</sub>, with decay α<sub>t</sub> ∈ (0, 1) and write strength β<sub>t</sub> ∈ (0, 1) computed from the input.</li>
+        <li>MLA: c<sub>KV</sub> = RMSNorm(x·W<sub>DKV</sub>) (512 values) and k<sub>R</sub> = RoPE(x·W<sub>KR</sub>) (64 values) are cached; k = [c<sub>KV</sub>·W<sub>UK</sub>, k<sub>R</sub>], v = c<sub>KV</sub>·W<sub>UV</sub>. In decode, q·k = (q<sub>C</sub>·W<sub>UK</sub>ᵀ)·c<sub>KV</sub> + q<sub>R</sub>·k<sub>R</sub>, so scores are computed against the latent directly.</li>
+        <li>Gated DeltaNet, per value head, with q<sub>t</sub> and k<sub>t</sub> L2-normalized per head and q<sub>t</sub> scaled by 1/√d<sub>k</sub>: S<sub>t</sub> = α<sub>t</sub>·S<sub>t−1</sub>·(I − β<sub>t</sub> k<sub>t</sub>k<sub>t</sub>ᵀ) + β<sub>t</sub> v<sub>t</sub>k<sub>t</sub>ᵀ, o<sub>t</sub> = S<sub>t</sub> q<sub>t</sub>, with decay α<sub>t</sub> = exp(−exp(A_log)·softplus(a<sub>t</sub> + dt_bias)) ∈ (0, 1) and write strength β<sub>t</sub> = σ(b<sub>t</sub>) ∈ (0, 1), where a<sub>t</sub> and b<sub>t</sub> are linear projections of the input.</li>
         <li>Cache bytes per sequence = Σ<sub>layers</sub> values per position × positions kept × bytes per value, plus fixed states.</li>
       </ul></details>
-      <p class="sources">Sources: <a href="${esc(m.source)}" target="_blank" rel="noreferrer">${esc(m.name)} config.json</a> · <a href="https://arxiv.org/abs/2305.13245" target="_blank" rel="noreferrer">GQA</a> · <a href="https://arxiv.org/abs/2405.04434" target="_blank" rel="noreferrer">MLA (DeepSeek-V2)</a> · <a href="https://arxiv.org/abs/2412.06464" target="_blank" rel="noreferrer">Gated DeltaNet</a> · <a href="https://huggingface.co/openai/gpt-oss-120b" target="_blank" rel="noreferrer">gpt-oss model card</a>.</p>`;
+      <p class="sources">Sources: ${configLink(m)} · <a href="https://arxiv.org/abs/2305.13245" target="_blank" rel="noreferrer">GQA</a> · <a href="https://arxiv.org/abs/2405.04434" target="_blank" rel="noreferrer">MLA (DeepSeek-V2)</a> · <a href="https://arxiv.org/abs/2412.06464" target="_blank" rel="noreferrer">Gated DeltaNet</a> · <a href="https://arxiv.org/abs/2508.10925" target="_blank" rel="noreferrer">gpt-oss model card (OpenAI, 2025), section 2</a>.</p>`;
   }
 
   (window.CHAPTERS = window.CHAPTERS || {}).attention = { render };

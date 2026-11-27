@@ -16,7 +16,7 @@
     const final = ctxAt(turns), P = params(m);
     return `${figure(s, W, H, 'prefill tokens over turns')}
       <p class="status">After ${turns} turns the context is ${fmtN(final)} tokens: ${fmtBytes(cacheBytes(m, final).total)} of KV cache for ${esc(m.name)}. Prefilled in total: ${fmtParams(noCache[turns - 1])} tokens without prefix caching (${fmtFlops(2 * P.matmul * noCache[turns - 1])} for the weights alone), ${fmtParams(withCache[turns - 1])} with it.</p>
-      <p class="caption">Cumulative prompt tokens processed by prefill. Without caching, every turn processes the whole conversation again, so the total grows with the square of the number of turns; with prefix caching, only each turn's new tokens are processed, as long as the cached blocks stay in memory. Token counts per turn are illustrative.</p>`;
+      <p class="caption">Cumulative prompt tokens processed by prefill. Without caching, every turn processes the whole conversation again, so the total grows with the square of the number of turns; with prefix caching, only each turn's new tokens, plus those of the last partly filled block, are processed, as long as the cached blocks stay in memory. Token counts per turn are illustrative.</p>`;
   }
 
   function render(ctx) {
@@ -27,7 +27,7 @@
       <h2>Tokens processed over the turns</h2>${fig(m, W)}
       <ul class="formulas">
         <li>Context limit: when the conversation approaches the model's maximum context (${fmtN(m.context)} for ${esc(m.name)}), agents summarize or drop older turns.</li>
-        <li>Cache reuse needs the prefix to stay byte-identical: changing an early part of the context (for example a timestamp in the system prompt) invalidates every block after it.</li>
+        <li>Cache reuse needs the token IDs of the prefix to stay identical: a change at an early position (for example a timestamp in the system prompt) changes the hash of the block that contains it and of every later block, so prefill restarts from that block.</li>
       </ul>
       <p class="sources">Sources: <a href="https://arxiv.org/abs/2210.03629" target="_blank" rel="noreferrer">ReAct</a> · <a href="https://arxiv.org/abs/2312.07104" target="_blank" rel="noreferrer">SGLang (prefix reuse)</a>.</p>`;
   }

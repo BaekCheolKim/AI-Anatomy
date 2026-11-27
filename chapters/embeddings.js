@@ -10,7 +10,7 @@
     const index = docs * dims * vbytes, chunk = 512;
     const embedFlops = 2 * P.matmul * chunk * docs;
     return `
-      <p class="lead">An embedding model maps a text to one vector, so that texts with related meaning get vectors with a large cosine similarity. It is trained with a contrastive loss: a query and a matching passage are pulled together, non-matching passages pushed apart. Retrieval uses it to find documents for a question: documents are embedded once and stored; at question time the question is embedded and the nearest document vectors are looked up; the matching texts are placed in the language model's context (retrieval-augmented generation).</p>
+      <p class="lead">An embedding model maps a text to one vector, so that texts with related meaning get vectors with a large cosine similarity. It is trained with a contrastive loss, which increases the cosine similarity of a query with its matching passage and decreases it with non-matching passages. Retrieval uses it to find documents for a question: documents are embedded once and stored; at question time the question is embedded and the nearest document vectors are looked up; the matching texts are placed in the language model's context (retrieval-augmented generation).</p>
       <p><b>${esc(E.name)}</b>: a ${E.llm.layers}-layer Qwen3 decoder (H = ${fmtN(E.llm.hidden)}) without the output layer. The final hidden state of the last token, L2-normalized, is the embedding: up to ${fmtN(E.dims)} values, and any first ${E.minDims} to ${fmtN(E.dims)} of them can be used (trained with Matryoshka representation learning), up to ${fmtN(E.maxLen)} tokens of input. Queries are prefixed with a one-line task instruction. Parameters: ${fmtN(P.total)} computed${ok ? ', equal to the checkpoint' : ` (checkpoint: ${fmtN(E.checkpoint)})`}.</p>
       <h2>Retrieval, step by step</h2>
       <table class="data ops"><thead><tr><th>#</th><th>step</th><th>when</th><th>cost for this setup</th></tr></thead><tbody>
@@ -24,7 +24,7 @@
       <p class="caption">Index size = chunks × dimensions × bytes per value. Fewer dimensions and lower precision shrink the index and the search, at some loss of retrieval accuracy.</p>
       <details class="more"><summary>Formulas</summary><ul class="formulas">
         <li>Cosine similarity: cos(q, d) = q·d / (‖q‖‖d‖); with normalized vectors, the dot product.</li>
-        <li>Contrastive (InfoNCE) loss for a query q with matching passage d⁺ and others d<sub>j</sub>: −ln [exp(cos(q, d⁺)/τ) / Σ<sub>j</sub> exp(cos(q, d<sub>j</sub>)/τ)].</li>
+        <li>Contrastive (InfoNCE) loss for a query q with matching passage d⁺ and non-matching passages d<sub>j</sub>: −ln [exp(cos(q, d⁺)/τ) / (exp(cos(q, d⁺)/τ) + Σ<sub>j</sub> exp(cos(q, d<sub>j</sub>)/τ))], with temperature τ.</li>
       </ul></details>
       <p class="sources">Sources: <a href="${esc(E.source)}" target="_blank" rel="noreferrer">${esc(E.name)} config.json</a> · <a href="${esc(E.card)}" target="_blank" rel="noreferrer">model card</a> · <a href="https://arxiv.org/abs/2005.11401" target="_blank" rel="noreferrer">retrieval-augmented generation (Lewis et al.)</a> · <a href="https://arxiv.org/abs/2205.13147" target="_blank" rel="noreferrer">Matryoshka representation learning</a>.</p>`;
   }

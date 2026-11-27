@@ -43,7 +43,7 @@
         + (isMoE(m) ? `<text x="${x + 6}" y="${y + 58}" class="val">EP ${ep}</text>` : '');
     }
     return `${figure(s, W, nodes * (cellH + gap) + 4, 'GPUs and their coordinates')}
-      <p class="caption">The first ${show} of ${fmtN(N)} GPUs with their index in each dimension. Ranks are numbered with TP fastest, then CP, DP and PP, so groups of consecutive ranks share a node: here a TP group ${S.tp <= per ? 'fits inside one node' : 'spans nodes'}${S.pp > 1 ? `, and consecutive pipeline stages are ${S.tp * S.cp * S.dp} ranks apart` : ''}.</p>`;
+      <p class="caption">The first ${show} of ${fmtN(N)} GPUs with their index in each dimension. Ranks are numbered here with TP fastest, then CP, DP and PP (Megatron-LM's default order; the Llama 3 paper orders them TP, CP, PP, DP), so groups of consecutive ranks share a node: here a TP group ${S.tp <= per ? 'fits inside one node' : 'spans nodes'}${S.pp > 1 ? `, and consecutive pipeline stages are ${S.tp * S.cp * S.dp} ranks apart` : ''}.</p>`;
   }
 
   function figMemory(m, S, ctx, W) {
@@ -80,7 +80,7 @@
       <li><b>TP</b> splits each weight matrix over ${S.tp} GPU${S.tp > 1 ? 's' : ''}: attention heads and FFN columns per GPU; partial results are combined after the attention output and FFN down projections, 2 times per layer in the forward pass and 2 in the backward pass. Sequence parallelism also splits the norms and dropout along the sequence.</li>
       <li><b>PP</b> splits the ${m.layers} layers into ${S.pp} stage${S.pp > 1 ? 's' : ''} of ${L.layersPerStage}; activations pass between stages point to point.${bubble}</li>
       ${isMoE(m) ? `<li><b>EP</b> splits the ${m.ffn.experts} experts of each MoE layer over ${S.ep} GPU${S.ep > 1 ? 's' : ''} (${m.ffn.experts / Math.max(1, S.ep)} each); tokens travel to their experts and back (all-to-all), twice per MoE layer in each direction.</li>` : ''}
-      <li><b>CP</b> splits each sequence into ${S.cp} chunk${S.cp > 1 ? 's' : ''}; attention passes key and value blocks around the ring of CP GPUs. Transformer Engine also offers an all-to-all variant that regroups attention heads instead, which needs the heads per GPU to be divisible by CP.</li></ul>`;
+      <li><b>CP</b> splits each sequence over ${S.cp} GPU${S.cp > 1 ? 's' : ''}: Megatron-LM cuts it into 2·CP chunks and gives rank r chunks r and 2·CP − 1 − r, which balances causal attention work, so the length must be divisible by 2·CP. Attention passes key and value blocks around the ring of CP GPUs. Transformer Engine also offers an all-to-all variant (as in DeepSpeed Ulysses) that regroups attention heads instead; it needs both the query heads and the K/V heads per GPU to be divisible by CP.</li></ul>`;
   }
 
   function render(ctx) {

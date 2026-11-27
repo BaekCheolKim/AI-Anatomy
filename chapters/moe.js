@@ -26,7 +26,7 @@
   function routerSentence(m) {
     const f = m.ffn;
     if (f.router === 'sigmoid-grouped') {
-      return `Each expert's score is sigmoid(x·w<sub>e</sub>). For selection only, a per-expert bias is added; training adjusts it to balance the load across experts, without an auxiliary loss. Only the ${f.topkGroups} best-scoring of ${f.groups} groups of ${f.experts / f.groups} experts are eligible. The ${f.topK} selected scores are normalized to sum to 1 and multiplied by ${f.routedScale}.`;
+      return `Each expert's score is sigmoid(x·w<sub>e</sub>). For selection only, a per-expert bias is added; after each training step it is lowered for overloaded experts and raised for underloaded ones (auxiliary-loss-free balancing), and a sequence-wise balance loss with weight 0.0001 is applied as well. Only the ${f.topkGroups} best-scoring of ${f.groups} groups of ${f.experts / f.groups} experts are eligible. The ${f.topK} selected scores are normalized to sum to 1 and multiplied by ${f.routedScale}.`;
     }
     if (f.router === 'topk-softmax') {
       return `The router, a linear layer with a bias, gives ${f.experts} logits. The ${f.topK} largest are kept, and a softmax over those ${f.topK} gives the weights.`;
@@ -146,7 +146,7 @@
     const rows = parts.map(([name, stored, used]) => `<tr><td>${name}</td><td class="r">${fmtParams(stored)}</td><td class="r">${fmtParams(used)}</td><td class="r">${fmtPct(stored, P.total)}</td></tr>`).join('');
     return `${figure(s, W, 96, 'parameters by component')}
       <table class="data"><thead><tr><th>component</th><th class="r">stored</th><th class="r">used per token</th><th class="r">share of stored</th></tr></thead><tbody>${rows}</tbody></table>
-      <p class="caption">${esc(m.name)}: parameters by component, stored (top) and used for one text token (bottom), on the same scale.${isMoE(m) ? ' Light: routed experts. Dark: everything else.' : ''} The embedding table is counted in full, as model authors count it, although each token reads one row of it.${P.mtp ? ` Not shown: the multi-token-prediction module, ${fmtParams(P.mtp)} parameters, used only for training and speculative decoding.` : ''}</p>`;
+      <p class="caption">${esc(m.name)}: parameters by component, stored (top) and used for one text token (bottom), on the same scale.${isMoE(m) ? ' Light: routed experts. Dark: everything else.' : ''} The embedding table is counted in full in both bars, although each token reads one row of it; most authors count it as active, OpenAI's gpt-oss count leaves it out.${P.mtp ? ` Not shown: the multi-token-prediction module, ${fmtParams(P.mtp)} parameters, used only for training and speculative decoding.` : ''}</p>`;
   }
 
   // ---- figure 4: weights over the reader's GPUs ----
@@ -199,13 +199,13 @@
     }
     const ml = moeLayer(m), Fe = f.expertInter;
     const expert = f.swigluLimit
-      ? `a SwiGLU variant with biases, its inputs clamped at ±${f.swigluLimit} (swiglu_limit in config.json)`
+      ? `y<sub>e</sub> = ((a ⊙ σ(1.702·a)) ⊙ (u + 1))·W<sub>down,e</sub> + b<sub>down,e</sub>, with a = min(x·W<sub>gate,e</sub> + b<sub>gate,e</sub>, ${f.swigluLimit}) and u = clamp(x·W<sub>up,e</sub> + b<sub>up,e</sub>, −${f.swigluLimit}, ${f.swigluLimit}) (swiglu_limit in config.json; OpenAI's reference code)`
       : 'y<sub>e</sub> = (SiLU(x·W<sub>gate,e</sub>) ⊙ x·W<sub>up,e</sub>)·W<sub>down,e</sub>';
     const flopsTok = 2 * (f.topK + f.shared) * 3 * H * Fe + 2 * H * f.experts;
     return `<ul class="formulas">
-      <li>Router: s = x·W<sub>r</sub>${f.routerBias ? ' + b' : ''}, W<sub>r</sub> ∈ ℝ<sup>H × E</sup> = ℝ<sup>${fmtN(H)} × ${f.experts}</sup>. ${routerSentence(m)}</li>
+      <li>Router: ${f.router === 'sigmoid-grouped' ? 's = σ(x·W<sub>r</sub>)' : f.router === 'topk-softmax' ? 's = x·W<sub>r</sub> + b' : 's = x·W<sub>r</sub>'}, W<sub>r</sub> ∈ ℝ<sup>H × E</sup> = ℝ<sup>${fmtN(H)} × ${f.experts}</sup>. ${routerSentence(m)}</li>
       <li>Expert e: ${expert}, with W<sub>gate,e</sub>, W<sub>up,e</sub> ∈ ℝ<sup>${fmtN(H)} × ${fmtN(Fe)}</sup> and W<sub>down,e</sub> ∈ ℝ<sup>${fmtN(Fe)} × ${fmtN(H)}</sup>: ${fmtN(ml.perExpert)} parameters.</li>
-      <li>Layer output: y = Σ<sub>e ∈ selected</sub> g<sub>e</sub>·y<sub>e</sub>${f.shared ? ' + shared(x)' : ''}.</li>
+      <li>Layer output: y = Σ<sub>e ∈ selected</sub> g<sub>e</sub>·y<sub>e</sub>${f.shared ? (f.sharedGate ? ' + σ(x·w<sub>s</sub>)·shared(x)' : ' + shared(x)') : ''}.</li>
       <li>Per MoE layer: ${f.experts} × ${fmtN(ml.perExpert)} + router ${fmtN(ml.router)}${f.shared ? ` + shared ${fmtN(ml.shared)}` : ''} = ${fmtN(ml.total)} parameters; ${fmtN(ml.active)} used per token.</li>
       <li>FLOPs per token per MoE layer: 2·(k${f.shared ? ' + shared' : ''})·3·H·F<sub>e</sub> + 2·H·E = ${fmtFlops(flopsTok)}. Whole forward pass: about 2 × ${fmtParams(P.matmul)} = ${fmtFlops(2 * P.matmul)} per token, plus attention over the context.</li>
       <li>Experts selected by n tokens, each selecting k of E uniformly: E·(1 − (1 − k/E)<sup>n</sup>).</li>
@@ -214,7 +214,7 @@
 
   function render(ctx) {
     const m = ctx.m, W = ctx.width;
-    const src = [`<a href="${esc(m.source)}" target="_blank" rel="noreferrer">${esc(m.name)} config.json</a>`];
+    const src = [`${configLink(m)}`];
     if (m.published.url) src.push(`<a href="${esc(m.published.url)}" target="_blank" rel="noreferrer">published parameter counts</a>`);
     if (m.ffn.router === 'sigmoid-grouped') src.push('<a href="https://arxiv.org/abs/2412.19437" target="_blank" rel="noreferrer">DeepSeek-V3 report, routing and load balancing</a>');
     return `

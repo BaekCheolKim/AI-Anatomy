@@ -34,7 +34,7 @@
     const attnF = 4 * v.layers * p.patches * p.patches * h;
     const rows = [
       ['Patch embedding', `${v.channels} × ${v.temporalPatch} × ${v.patch} × ${v.patch} pixel values → ${fmtN(h)}`, `${fmtN(p.patches)} × ${fmtN(h)}`, patchP, 2 * patchP * p.patches, 'a convolution with stride = kernel; an image is repeated to fill the 2-frame time axis'],
-      ['Position embedding', `${fmtN(v.posEmbed)} learned positions (${Math.sqrt(v.posEmbed)} × ${Math.sqrt(v.posEmbed)}), interpolated to the grid`, `${fmtN(p.patches)} × ${fmtN(h)}`, v.posEmbed * h, 0, ''],
+      ['Position embedding', `${fmtN(v.posEmbed)} learned positions (${Math.sqrt(v.posEmbed)} × ${Math.sqrt(v.posEmbed)}), bilinearly interpolated to the patch grid and added to the patch embeddings`, `${fmtN(p.patches)} × ${fmtN(h)}`, v.posEmbed * h, 0, 'each encoder block also applies 2-D rotary embedding (row and column index) to its queries and keys'],
       [`${v.layers} encoder blocks`, `bidirectional attention over the image's patches + GELU MLP (${fmtN(h)} → ${fmtN(v.inter)} → ${fmtN(h)})`, `${fmtN(p.patches)} × ${fmtN(h)}`, v.layers * block, 2 * v.layers * block * p.patches + attnF, `attention part ≈ ${fmtFlops(attnF)} if every block attends over all ${fmtN(p.patches)} patches`],
       ['Merger', `concatenate ${v.merge} × ${v.merge} neighbours (${fmtN(hm)}), MLP → ${fmtN(v.outHidden)}`, `${fmtN(p.tokens)} × ${fmtN(v.outHidden)}`, merger(false), 2 * (merger(false) - 2 * h) * p.tokens, 'output width = the language model\'s H'],
     ];
@@ -50,7 +50,7 @@
     const sizes = [[448, 448], [1024, 768], [1920, 1080], [3840, 2160]];
     return `<table class="data"><thead><tr><th>image</th><th class="r">patches</th><th class="r">visual tokens</th><th class="r">KV cache (BF16)</th></tr></thead><tbody>
       ${sizes.map(([w, h]) => { const p = plan(v, w, h); return `<tr><td>${w} × ${h}</td><td class="r">${fmtN(p.patches)}</td><td class="r">${fmtN(p.tokens)}</td><td class="r">${fmtBytes(p.tokens * kvBytesPerToken(m))}</td></tr>`; }).join('')}</tbody></table>
-      <p class="caption">Tokens grow with the pixel count: a 4K frame costs as many tokens as several pages of text. Processors cap the pixel count per image (configurable), resizing larger images down before they are cut into patches.</p>`;
+      <p class="caption">Tokens grow with the pixel count: a 3840 × 2160 frame becomes 8,160 visual tokens. Processors cap the pixel count per image (configurable), resizing larger images down before they are cut into patches.</p>`;
   }
 
   function render(ctx) {
@@ -61,11 +61,11 @@
       return `${lead}<p><b>${esc(m.name)}</b> reads text only. Select ${vl} to see their image path.</p>`;
     }
     return `${lead}
-      <p><b>${esc(m.name)}</b>: a ${v.layers}-layer vision encoder (width ${fmtN(v.hidden)}) on ${v.patch} × ${v.patch}-pixel patches, ${v.merge} × ${v.merge} patches merged per token, so one visual token covers ${v.patch * v.merge} × ${v.patch * v.merge} pixels.${v.deepstack ? ` It also merges features of ${v.deepstack} intermediate encoder layers and adds them to the language model's first layers (DeepStack).` : ''}${m.mrope ? ' Positions of visual tokens are encoded in three parts (time, height, width) of the rotary embedding (M-RoPE).' : ''} Video frames enter in pairs (temporal patch ${v.temporalPatch}).</p>
+      <p><b>${esc(m.name)}</b>: a ${v.layers}-layer vision encoder (width ${fmtN(v.hidden)}) on ${v.patch} × ${v.patch}-pixel patches, ${v.merge} × ${v.merge} patches merged per token, so one visual token covers ${v.patch * v.merge} × ${v.patch * v.merge} pixels.${v.deepstack ? ` It also merges features of ${v.deepstack} intermediate encoder layers and adds them to the language model's first layers (DeepStack).` : ''}${m.mrope ? ' Visual tokens get time, height and width positions, encoded in interleaved dimension pairs of the rotary embedding (interleaved M-RoPE).' : ''} Video frames enter in pairs (temporal patch ${v.temporalPatch}).</p>
       <h2>One image, cut into tokens</h2>${figGrid(m, v, W)}
       <h2>From pixels to tokens</h2>${figPath(m, v)}
       <h2>Tokens per image size</h2>${figSizes(m, v, W)}
-      <p class="sources">Sources: <a href="${esc(m.source)}" target="_blank" rel="noreferrer">${esc(m.name)} config.json (vision_config)</a> · <a href="https://arxiv.org/abs/2010.11929" target="_blank" rel="noreferrer">ViT (Dosovitskiy et al.)</a>.</p>`;
+      <p class="sources">Sources: ${configLink(m, 'config.json (vision_config)')} · <a href="https://arxiv.org/abs/2010.11929" target="_blank" rel="noreferrer">ViT (Dosovitskiy et al.)</a>.</p>`;
   }
 
   function mount(root, ctx, rerender) {

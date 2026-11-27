@@ -29,7 +29,7 @@ window.MEASURED = [
   },
   {
     chapter: 'engines', model: 'qwen3-vl-235b', what: 'GPU memory split by the engine',
-    value: '56.47 GiB weights + 22.22 GiB KV cache within 0.90 × 95 GiB; the rest for activations and CUDA graphs',
+    value: '56.47 GiB weights + 22.22 GiB KV cache within 0.90 × 95.6 GiB (97,871 MiB per GPU); the rest for activations, CUDA graphs and allocations outside PyTorch (for example NCCL buffers)',
     computed: null,
     conditions: 'vLLM 0.32.0, --gpu-memory-utilization 0.90, --max-model-len 131072',
   },
@@ -62,5 +62,5 @@ function measuredTable(chapter, m) {
     <table class="data"><thead><tr><th>quantity</th><th>computed</th><th>measured</th><th>conditions</th></tr></thead><tbody>
     ${rows.map((r) => `<tr class="${r.model && m && r.model === m.id ? 'on' : ''}"><td>${esc(r.what)}${r.model ? `<br><span class="f">${esc(models(r.model).name)}</span>` : ''}</td><td class="f">${r.computed ? r.computed(r.model ? models(r.model) : null) : '—'}</td><td>${esc(r.value)}</td><td class="f">${esc(r.conditions)}</td></tr>`).join('')}
     </tbody></table>
-    <p class="caption">Measured values come from runs on one system and depend on its hardware and software; the computed column comes from the model's config and holds on any hardware.</p>`;
+    <p class="caption">Measured values come from runs on one system and depend on its hardware and software. The computed column comes from the model's config and the page's formulas; where it states a bandwidth, it holds only for that bandwidth.</p>`;
 }

@@ -6,7 +6,7 @@
     ['Data', 'web text, filtered, counted in tokens', ['data', 'tokenization']],
     ['Pre-training', 'next-token prediction on trillions of tokens', ['io', 'network', 'attention', 'moe', 'images', 'training', 'scaling', 'long-context', 'parallel', 'sampling']],
     ['Post-training', 'conversations, fine-tuning, distillation', ['chat', 'lora', 'distillation', 'context']],
-    ['Reinforcement learning', 'rewards from checkers or from human preferences', ['rl', 'rl-gpus', 'preferences']],
+    ['Reinforcement learning', 'rewards from rule-based answer checks or from reward models trained on human preferences', ['rl', 'rl-gpus', 'preferences']],
     ['Running', 'prefill, decode, caches, engines, serving', ['prefill-decode', 'kv-cache', 'precision', 'fit', 'engines', 'serving', 'request', 'agents']],
   ];
 
@@ -40,7 +40,7 @@
   function figStages(W) {
     const narrow = W < 560;
     return `<div class="stages-row${narrow ? ' narrow' : ''}">${STAGES.map(([name, what, ids], i) => `<div class="stage"><p class="part">${i + 1} ${esc(name)}</p><p class="f">${esc(what)}</p><ul>${ids.map((id) => `<li>${link(id)}</li>`).join('')}</ul></div>`).join('')}</div>
-      <p class="caption">Each stage produces the input of the next: filtered text, a base model, an assistant, a reasoning model, and a model served to users. Other model families (embeddings, image generation, speech) follow the same stages with different inputs and objectives: ${link('embeddings', 'embeddings')}, ${link('diffusion', 'image generation')}, ${link('speech', 'speech recognition')}.</p>`;
+      <p class="caption">Each stage produces the input of the next: filtered text, a base model, an assistant, an assistant further trained against rewards (a reasoning model when the rewards check final answers), and a model served to users. Other model families (embeddings, image generation, speech) also go through data preparation, training and serving, with different inputs, objectives and training stages: ${link('embeddings', 'embeddings')}, ${link('diffusion', 'image generation')}, ${link('speech', 'speech recognition')}.</p>`;
   }
 
   function figMatrix(m) {
@@ -54,7 +54,7 @@
   function render(ctx) {
     const W = ctx.width;
     return `
-      <p class="lead">A large language model is made in stages. Web text is filtered and converted to tokens; pre-training teaches a network to predict the next token; post-training on conversations turns it into an assistant; reinforcement learning improves its answers where they can be scored; and an inference engine serves it to many users. This page follows those stages with figures computed from the published configurations of eight models. Every number holds on any hardware; GPU memory and GPU count, set at the top, are the only hardware inputs.</p>
+      <p class="lead">A large language model is made in stages. Web text is filtered and converted to tokens; pre-training trains a network to predict the next token; post-training on conversations turns it into an assistant; reinforcement learning improves its answers where they can be scored; and an inference engine serves it to many users. This page follows those stages with figures computed from the published configurations of eight models. Computed numbers hold on any hardware, and published or measured figures carry their sources; GPU memory and GPU count, set at the top, are the only hardware inputs.</p>
       <h2>From data to a served model</h2>${figStages(W)}
       <h2>Techniques of each model</h2>${figMatrix(ctx.m)}
       <p class="sources">The order of topics follows Andrej Karpathy's video <a href="https://www.youtube.com/watch?v=7xTGNNLPyMI" target="_blank" rel="noreferrer">Deep Dive into LLMs like ChatGPT</a> (2025). Model configurations and reports are cited in each chapter.</p>`;

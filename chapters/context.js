@@ -23,7 +23,7 @@
       ${figure(s, W, 38, 'context window')}
       <table class="data"><thead><tr><th>segment</th><th>written by</th><th class="r">tokens</th></tr></thead><tbody>${rows}
       <tr><td><b>total</b></td><td></td><td class="r"><b>${fmtN(total)}</b></td></tr></tbody></table>
-      <p class="caption">One request (illustrative token counts). Dark: tokens the model generates; light: tokens it reads. For ${esc(m.name)} the whole window occupies ${fmtBytes(cacheBytes(m, total).total)} of KV cache${m.linearAttention ? ' (including the fixed linear-attention state)' : ''}, ${fmtBytes(perTok)} per token. Search results are text placed in the context: the model reads them in the same forward pass as the question.</p>`;
+      <p class="caption">One request (illustrative token counts). Dark: tokens the model generates; light: tokens it reads. For ${esc(m.name)} the whole window occupies ${fmtBytes(cacheBytes(m, total).total)} of KV cache${m.linearAttention ? ' (including the fixed linear-attention state)' : ''}, ${fmtBytes(perTok)} per token. Search results are tokens placed in the context: after the tool runs, the server appends them and runs a prefill pass over them, and every later token attends to them as it attends to the question.</p>`;
   }
 
   function figCompute(m, W) {
@@ -37,17 +37,17 @@
   function render(ctx) {
     const m = ctx.m, W = ctx.width;
     return `
-      <p class="lead">Everything a model uses to produce a reply is either in its parameters, learned during training, or in its context window, the tokens of the current request. Facts in the parameters are reproduced approximately; text in the context can be read exactly. Tool use places more text into the context: the model generates a tool call as tokens, the serving software runs the tool, and the result is appended as tokens before the model continues.</p>
+      <p class="lead">Everything a model uses to produce a reply is either in its parameters, learned during training, or in its context window, the tokens of the current request. Facts in the parameters are reproduced approximately; text in the context is present token for token and every generated token attends to it, although retrieval accuracy from long contexts depends on where the information is placed (Liu et al., 2023). Tool use places more text into the context: the model generates a tool call as tokens, the serving software runs the tool, and the result is appended as tokens before the model continues.</p>
       <h2>One request, by segment</h2>${figWindow(m, W)}
       <h2>Computation per token is fixed</h2>${figCompute(m, W)}
       <h2>Consequences</h2>
       <ul class="formulas">
-        <li><b>Hallucination.</b> The model produces the most probable continuation. If a fact is in neither the parameters nor the context, that continuation can still be fluent and wrong. Post-training data that answers “I don't know” where the model's knowledge is unreliable reduces this (the Llama 3 paper builds such data by checking the model's answers against documents); tools put the fact into the context.</li>
+        <li><b>Hallucination.</b> The model samples each token from its predicted next-token distribution (greedy decoding takes the most probable token). If a fact is in neither the parameters nor the context, the generated continuation can still be fluent and wrong. Post-training data that answers “I don't know” where the model's knowledge is unreliable reduces this (the Llama 3 paper builds such data by checking the model's answers against documents); tools put the fact into the context.</li>
         <li><b>Arithmetic and counting.</b> One forward pass has a fixed number of layers. A result that needs many sequential steps fits better into many tokens of intermediate work, or into a code tool that computes it exactly.</li>
         <li><b>Spelling.</b> The model sees token IDs, not letters (Tokenization).</li>
         <li><b>Statements about itself.</b> What a model says about its name or origin comes from its training data or system prompt, not from inspecting itself.</li>
       </ul>
-      <p class="sources">Sources: <a href="https://arxiv.org/abs/2407.21783" target="_blank" rel="noreferrer">Llama 3 paper, section 4.3.6 (factuality)</a> · <a href="https://arxiv.org/abs/2201.11903" target="_blank" rel="noreferrer">chain-of-thought prompting</a> · <a href="https://arxiv.org/abs/2302.04761" target="_blank" rel="noreferrer">Toolformer</a>.</p>`;
+      <p class="sources">Sources: <a href="https://arxiv.org/abs/2407.21783" target="_blank" rel="noreferrer">Llama 3 paper, section 4.3.6 (factuality)</a> · <a href="https://arxiv.org/abs/2201.11903" target="_blank" rel="noreferrer">chain-of-thought prompting</a> · <a href="https://arxiv.org/abs/2302.04761" target="_blank" rel="noreferrer">Toolformer</a> · <a href="https://arxiv.org/abs/2307.03172" target="_blank" rel="noreferrer">Lost in the Middle (Liu et al., 2023)</a>.</p>`;
   }
 
   function mount(root, ctx, rerender) {

@@ -22,13 +22,13 @@
     'Questions? Write to anna.k@breadnotes.example',
   ];
   const STAGES = [
-    ['crawl', 'Crawl', 'A web crawl stores each page as HTML. Common Crawl publishes such snapshots; FineWeb starts from 96 of them.'],
+    ['crawl', 'Crawl', 'A web crawl stores each page as HTML. Common Crawl publishes such snapshots; FineWeb\'s first release started from 96 of them.'],
     ['url', 'URL filter', `The address ${URL_EX} is checked against block lists of domains and words. Not listed: kept.`],
-    ['extract', 'Text extraction', 'An extractor keeps the main text and drops markup, navigation, cookie notices and other page furniture.'],
+    ['extract', 'Text extraction', 'An extractor keeps the main text and drops markup, navigation menus, cookie notices and other text outside the main content.'],
     ['language', 'Language', 'A classifier scores the language of the text. English score 0.97 (illustrative) against FineWeb\'s threshold of 0.65: kept.'],
     ['quality', 'Quality rules', 'Rules on word count, repeated lines, symbol-to-word ratio and lines ending in punctuation. This page passes. A page that repeats one line drops out (second document).'],
     ['dedup', 'Deduplication', 'MinHash compares word n-grams between documents. Two mirror copies of this page in the same crawl are near-duplicates: one copy is kept, the other two are dropped.'],
-    ['pii', 'Personal data', 'E-mail and IP addresses are replaced with placeholders.'],
+    ['pii', 'Personal data', 'E-mail addresses are replaced with email@example.com or firstname.lastname@example.org; public IP addresses with addresses from a fixed list of randomly generated ones. Private-range IP addresses are kept.'],
     ['tokens', 'Tokens', 'The remaining text is converted to token IDs (next chapter). Training-set sizes are counted in tokens.'],
   ];
   let stage = 0;
@@ -40,7 +40,7 @@
       return PAGE.map(([line]) => esc(line)).join('\n');
     }
     let lines = TEXT.map(esc);
-    if (at('pii')) lines[4] = lines[4].replace('anna.k@breadnotes.example', '<span class="chg">[email]</span>');
+    if (at('pii')) lines[4] = lines[4].replace('anna.k@breadnotes.example', '<span class="chg">email@example.com</span>');
     let out = lines.join('\n');
     if (id === 'quality') {
       out += '\n\n<span class="del">BEST PRICE BEST PRICE BEST PRICE\nBEST PRICE BEST PRICE BEST PRICE\nBEST PRICE BEST PRICE BEST PRICE</span>\n<span class="note-inline">second document: one line repeated, dropped</span>';
@@ -67,7 +67,7 @@
   function figTokens(m, W) {
     const known = window.MODELS.filter((x) => x.training?.tokens).sort((a, b) => a.training.tokens - b.training.tokens);
     const unknown = window.MODELS.filter((x) => !x.training?.tokens);
-    const narrow = W < 560, labelW = narrow ? 0 : 168, rowH = narrow ? 40 : 28, max = 16e12;
+    const narrow = W < 560, labelW = narrow ? 0 : 168, rowH = narrow ? 40 : 28, max = Math.max(...known.map((x) => x.training.tokens)) * 1.02;
     const barW = W - labelW - (narrow ? 0 : 150);
     let s = '';
     known.forEach((mm, i) => {
@@ -96,7 +96,7 @@
       <h2>One page through the pipeline</h2>${figPipeline()}
       <h2>Training tokens per model</h2>${figTokens(m, W)}
       <details class="more"><summary>Numbers and sources</summary><ul class="formulas">
-        <li>FineWeb: 15 trillion tokens of English web text (about 44 TB on disk) from 96 Common Crawl snapshots (2013–2024), produced with the stages above.</li>
+        <li>FineWeb as first released (v1.0.0, April 2024, the version described in the paper): 15 trillion tokens of English web text, about 44 TB on disk, from 96 Common Crawl snapshots from summer 2013 to April 2024, produced with the stages above. Later releases added snapshots through June 2025, for more than 18.5 trillion tokens.</li>
         <li>Bytes of token IDs = tokens × 2 (vocabulary ≤ 65,536) or × 4. Text bytes are larger: one token covers about 4 characters of English text.</li>
         <li>Llama 3: web data with URL, document and line-level deduplication, heuristic and model-based quality filters, and a data mix tuned on small models; ${esc(window.MODELS.find((x) => x.id === 'llama-3.1-405b').training.text)} for the 405B model.</li>
       </ul></details>

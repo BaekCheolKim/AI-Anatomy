@@ -88,7 +88,7 @@
       ? `Its embedding table is ${fmtN(m.vocab)} × ${fmtN(m.hidden)} = ${fmtParams(P.embed)} parameters; the same matrix computes the output scores (tied).`
       : `Its embedding table is ${fmtN(m.vocab)} × ${fmtN(m.hidden)} = ${fmtParams(P.embed)} parameters, and the output layer has the same shape: together ${fmtPct(P.embed + P.head, P.total)} of the model.`;
     return `
-      <p class="lead">The network reads integers, not characters. A tokenizer maps text to a sequence of token IDs, each an index into a fixed vocabulary. Byte-pair encoding (BPE) builds that vocabulary: it starts from the 256 possible byte values and repeatedly adds the most frequent adjacent pair as a new entry, so frequent strings become one token and rare strings stay several.</p>
+      <p class="lead">The network reads integers, not characters. A tokenizer maps text to a sequence of token IDs, each an index into a fixed vocabulary. Byte-level byte-pair encoding (BPE) builds that vocabulary: it starts from the 256 possible byte values and repeatedly adds the most frequent adjacent pair as a new entry, so frequent strings become one token and rare strings stay several. Llama 2's SentencePiece BPE starts from Unicode characters instead and uses byte tokens only for characters outside its vocabulary.</p>
       <p><b>${esc(m.name)}</b> uses ${esc(m.tokenizer)} with ${fmtN(m.vocab)} entries. ${emb}</p>
       <h2>Byte-pair encoding, one merge at a time</h2>
       <p class="controls"><label for="bpe-text">Text (edit it):</label></p>
@@ -98,7 +98,7 @@
       <p class="caption">Merges are counted inside pieces split by GPT-2's pre-tokenization pattern, so no token spans two words and a space attaches to the start of the next word. Training stops when no pair occurs twice. Production tokenizers run the same procedure on far more text until the vocabulary reaches its target size: GPT-2's 50,257 entries are 256 bytes, 50,000 merges and one end-of-text token. Hover a token for its ID; ⟨xx⟩ marks a byte that is part of a multi-byte character.</p>
       <p>The network receives one ID per token, not the letters inside it. Questions about letters, such as spelling a word or counting a character in it, depend on what the model has learned about each token's letters from the training data.</p>
       <h2>Vocabularies of the models</h2>${figVocab(m, W)}
-      <p class="sources">Sources: <a href="https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf" target="_blank" rel="noreferrer">GPT-2 paper, section 2.2 (byte-level BPE)</a> · <a href="https://arxiv.org/abs/2407.21783" target="_blank" rel="noreferrer">Llama 3 paper (128K vocabulary)</a> · <a href="${esc(m.source)}" target="_blank" rel="noreferrer">${esc(m.name)} config.json</a>.</p>`;
+      <p class="sources">Sources: <a href="https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf" target="_blank" rel="noreferrer">GPT-2 paper, section 2.2 (byte-level BPE)</a> · <a href="https://arxiv.org/abs/2407.21783" target="_blank" rel="noreferrer">Llama 3 paper (128K vocabulary)</a> · ${configLink(m)}.</p>`;
   }
 
   function mount(root, ctx) {

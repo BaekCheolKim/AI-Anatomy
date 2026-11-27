@@ -1,6 +1,6 @@
 # AI-Anatomy
 
-A static web page that shows, with figures, how large AI models are trained, served and run, and the techniques each model uses. Every number is computed from the model's published configuration, so it holds on any hardware. The only hardware inputs are GPU memory and GPU count, which the reader sets. The page runs no model.
+A static web page that shows, with figures, how large AI models are trained, served and run, and the techniques each model uses. Parameter counts, bytes and FLOPs are computed from each model's published configuration, so they hold on any hardware; published figures (training tokens, GPU hours) and measured values appear with their sources and conditions. The only hardware inputs are GPU memory and GPU count, which the reader sets. The page runs no model.
 
 ## Opening it
 
@@ -17,7 +17,7 @@ Models, each included for a technique or scale:
 | GPT-2 1.5B | The 2019 design: multi-head attention, learned positions, LayerNorm, GELU, tied embeddings |
 | Llama 3.1 8B | Dense model with grouped-query attention |
 | Llama 2 70B | LoRA fine-tuning |
-| Llama 3.1 405B | Largest dense open-weight model; published 4D-parallel training layout |
+| Llama 3.1 405B | Dense 405B model, the largest in Llama 3.1; published 4D-parallel training layout |
 | DeepSeek-V3 | Multi-head latent attention, 256 small experts + 1 shared, multi-token prediction, FP8 training |
 | Qwen3-VL-235B-A22B | Vision encoder + MoE language model |
 | Qwen3.5-397B-A17B | Gated DeltaNet + gated attention layers, 512 experts, multi-token prediction |
@@ -29,7 +29,7 @@ Other model families, each in its own chapter: Qwen3-Embedding-8B (retrieval), F
 
 All formulas are in `calc.js`.
 
-- **Parameters** are counted tensor by tensor from each config. For every model, the eleven of them, the count equals the checkpoint's parameter count on Hugging Face; for example, Qwen3.5-397B-A17B gives 403,397,928,944, which includes the vision encoder and multi-token-prediction module.
+- **Parameters** are counted tensor by tensor from each config. For all eleven models the count equals the checkpoint's parameter count on Hugging Face, after subtracting stored values that are not parameters (GPT-2: 50,331,648 causal-mask values; Llama 2 70B: 5,120 rotary inverse frequencies); for example, Qwen3.5-397B-A17B gives 403,397,928,944, which includes the vision encoder and multi-token-prediction module.
 - **Bytes** are in decimal units (1 GB = 10⁹ bytes): parameters × bytes per parameter of the chosen precision.
 - **Active parameters** are those used for one text token: unselected experts and the vision encoder are left out.
 - **Collective traffic** is computed per GPU, inside a node and between nodes, for a group of n GPUs with r of them per node.

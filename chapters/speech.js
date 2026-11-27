@@ -31,7 +31,7 @@
         <tr><td>encoder, once per window</td><td class="r">${fmtFlops(encF)}</td></tr>
         <tr><td>decoder, per text token</td><td class="r">${fmtFlops(decPerTok)}</td></tr>
         <tr><td>decoder, ${out} tokens</td><td class="r">${fmtFlops(decPerTok * out)}</td></tr>
-        <tr><td>cross-attention keys and values, computed once per window</td><td class="r">${fmtBytes(crossKV)} (BF16)</td></tr>
+        <tr><td>cross-attention keys and values, computed once per window</td><td class="r">${fmtBytes(crossKV)} (FP16, 2 bytes per value)</td></tr>
         <tr><td>self-attention cache, per text token</td><td class="r">${fmtBytes(selfKV)}</td></tr>
         <tr><td>weights, FP16</td><td class="r">${fmtBytes(P.total * 2)}</td></tr></tbody></table>
       <p class="caption">The encoder processes 1,500 positions at once and is limited by arithmetic; the decoder generates one token per step and reads its weights each time, like any decode. Cross-attention reads the same encoder output at every decoder step, so its keys and values are computed once per window and cached.</p>

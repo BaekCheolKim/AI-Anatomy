@@ -45,8 +45,8 @@
       <h2>One step of each</h2>${stepTable(m, ctx)}
       <details class="more"><summary>Formulas</summary><ul class="formulas">
         <li>Decode, B sequences at context c: FLOPs = B·(2·N + attention(c)); bytes = weights read + B·cache(c). With BF16 weights and small B, FLOPs per byte ≈ B: each 2-byte weight does 2 FLOPs per sequence.</li>
-        <li>For an MoE model, a decode step reads only the experts its B tokens select: E·(1 − (1 − k/E)<sup>B</sup>) of E per layer.</li>
-        <li>Multi-head latent attention in decode is computed in absorbed form: per cached position and head 2·(576 + 512) FLOPs on 576 cached values, so its attention runs at about 240 FLOPs per byte, near the compute limit.</li>
+        <li>For an MoE model, a decode step reads only the routed experts its B tokens select. If each token picks k of E experts uniformly and independently, the expected number per layer is E·(1 − (1 − k/E)<sup>B</sup>). Actual routing is not uniform, and shared experts are read at every step.</li>
+        <li>Multi-head latent attention in decode is computed in absorbed form: 2·(576 + 512) FLOPs per cached position and query head, on 576 cached values. For DeepSeek-V3's 128 query heads on one GPU and a BF16 cache this is 128·1,088/576 ≈ 242 FLOPs per byte, near the compute limit. Splitting the heads over t GPUs divides it by t, because every GPU reads the whole latent.</li>
         <li>Speculative decoding (draft tokens from a small model or an MTP module, verified in one pass) raises FLOPs per byte by checking several tokens per weight read.</li>
       </ul></details>
       <p class="sources">Sources: <a href="https://arxiv.org/abs/2211.05102" target="_blank" rel="noreferrer">Efficiently Scaling Transformer Inference (Pope et al.)</a> · <a href="https://arxiv.org/abs/2405.04434" target="_blank" rel="noreferrer">MLA</a> · <a href="https://arxiv.org/abs/2211.17192" target="_blank" rel="noreferrer">speculative decoding</a>.</p>`;

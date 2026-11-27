@@ -2,6 +2,18 @@
 // for illustrative examples (for instance which experts the example tokens select).
 
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+// GPUs per node for the serving chapters (KV cache, inference engines); shared so both place TP alike.
+window.SERVE = { gpn: 8 };
+const gpnSelect = (id) => `<label class="nw">GPUs per node <select id="${id}">${[4, 8].map((v) => `<option${v === SERVE.gpn ? ' selected' : ''}>${v}</option>`).join('')}</select></label>`;
+const bindGpn = (root, id, rerender) => root.querySelector(`#${id}`).addEventListener('change', (e) => { SERVE.gpn = Number(e.target.value); rerender(); });
+
+// Link to a model's config.json. A gated repository needs a Hugging Face login and acceptance of the license;
+// with `detail`, the model's sourceNote says where the values come from.
+const configLink = (m, label = 'config.json', detail = false) => {
+  const notes = [m.gated ? 'gated: requires a Hugging Face login and acceptance of the license' : '', detail ? m.sourceNote ?? '' : ''].filter(Boolean);
+  return `<a href="${esc(m.source)}" target="_blank" rel="noreferrer">${esc(m.name)} ${esc(label)}</a>${notes.length ? ` (${esc(notes.join('. '))})` : ''}`;
+};
 const showTok = (t) => esc(t.replace(/^ /, '␣'));   // a leading space is part of the token
 const range = (n) => Array.from({ length: n }, (_, i) => i);
 

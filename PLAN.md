@@ -38,7 +38,7 @@ Status: all chapters are built. Each chapter has 2–4 plain sentences, figures 
 ### Reinforcement learning
 | Chapter | Figure | Per model | Status |
 |---|---|---|---|
-| RL with checkable answers | GRPO: G answers per prompt, rewards, advantages normalized within the group, KL to a reference model | DeepSeek-R1 (trained from DeepSeek-V3) | **built** |
+| RL with checkable answers | GRPO: G answers per prompt, rewards, advantages normalized within the group, KL to a reference model | DeepSeek-R1 (trained from DeepSeek-V3-Base) | **built** |
 | + One RL step on GPUs | Timeline generate → score → reference → train → copy weights, with GPU memory in each phase (generation and training on the same GPUs) | NeMo-RL GRPO recipe for Qwen3.5-397B: 32 prompts × 8 answers | **built** |
 | Preference training | Human rankings → reward model → PPO; DPO without a reward model | Llama 2-Chat (PPO), Llama 3.1 (DPO) | **built** |
 
@@ -100,5 +100,6 @@ All applied: expert-parallel bytes per GPU (`inferenceStep` divides instance tot
 3. **Models** (done): `layouts.training` for every model (published for Llama 3.1 405B and DeepSeek-V3), chat formats, published post-training, RoPE scaling; three models of other families in `OTHER_MODELS`.
 4. **Chapters** (done): 31 chapters, from the overview to speech recognition.
 5. **Measured values** (done): `measured.js`, shown in their chapters.
+6. **Fact check** (done): every chapter checked against primary sources (papers, configs, chat templates, recipes, vLLM 0.32.0 source). Corrections include the harmony, Llama 3.1 and Qwen3.5 chat formats; LoRA initialization and QLoRA's 4.127 bits; the Qwen3.5 NeMo-RL recipe as data (`layouts.rl`: dynamic sampling, no KL term, vLLM TP 16 / EP 64); INT4 and GGUF bytes; 16-bit embedding and output layer in quantized totals; serving layouts with TP per node.
 
 Possible next steps: DeepSeek-V3.2 (sparse attention) and Kimi K2 (Muon optimizer) as optional models; more measured values from new runs.

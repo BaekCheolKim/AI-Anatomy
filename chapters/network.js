@@ -12,15 +12,16 @@
   // Operations of layer i for one token. params: weights used for this token; flops: 2 per weight.
   function layerOps(m, i) {
     const H = m.hidden, a = m.attention, t = layerTypes(m)[i], ops = [];
-    const n = fmtN, normF = m.norm === 'RMSNorm' ? 'x̂ = x / √(mean(x²) + ε) ⊙ g' : 'x̂ = (x − μ) / √(σ² + ε) ⊙ g + b';
+    const n = fmtN, normF = m.norm === 'RMSNorm' ? (m.normGainPlusOne ? 'x̂ = x / √(mean(x²) + ε) ⊙ (1 + w), the gain stored as w = g − 1' : 'x̂ = x / √(mean(x²) + ε) ⊙ g') : 'x̂ = (x − μ) / √(σ² + ε) ⊙ g + b';
+    const yarn = m.ropeScaling?.type === 'yarn' ? 1 + 0.1 * Math.log(m.ropeScaling.factor) : null;   // YaRN attention factor
     const norm = (label) => ({ name: `${m.norm}, ${label}`, f: normF, out: `${n(H)}`, p: normParams(m) });
     ops.push(norm('before token mixing'));
     if (t === 'linear') {
       const g = m.linearAttention, kT = g.keyHeads * g.keyDim, vT = g.valueHeads * g.valueDim;
       ops.push({ name: 'Input projection', f: 'q, k, v, z, b, a = x̂·W<sub>in</sub>', out: `q, k ${g.keyHeads} × ${g.keyDim}; v, z ${g.valueHeads} × ${g.valueDim}; b, a ${g.valueHeads}`, p: H * (2 * kT + 2 * vT) + H * 2 * g.valueHeads });
       ops.push({ name: `Causal convolution, width ${g.conv}`, f: 'q, k, v ← SiLU(depthwise conv over the last 4 positions)', out: 'same', p: (2 * kT + vT) * g.conv, note: `keeps the last ${g.conv - 1} inputs per sequence` });
-      ops.push({ name: 'Gated delta rule', f: 'α = decay(a), β = σ(b); per value head: S ← α·S·(I − β k kᵀ) + β v kᵀ; o = S q', out: `${g.valueHeads} × ${g.valueDim}`, p: 2 * g.valueHeads,
-        note: `state S: ${g.valueHeads} × ${g.keyDim} × ${g.valueDim} values per sequence, the same size at every length; each key head serves ${g.valueHeads / g.keyHeads} value heads`, mix: true });
+      ops.push({ name: 'Gated delta rule', f: `q, k L2-normalized per head, q × 1/√${g.keyDim}; α = exp(−exp(A_log)·softplus(a + dt_bias)), β = σ(b); per value head: S ← α·S·(I − β k kᵀ) + β v kᵀ; o = S q`, out: `${g.valueHeads} × ${g.valueDim}`, p: 2 * g.valueHeads,
+        note: `state S: ${g.valueHeads} × ${g.keyDim} × ${g.valueDim} values per sequence, the same size at every length; each query/key head serves ${g.valueHeads / g.keyHeads} consecutive value heads`, mix: true });
       ops.push({ name: 'Gated RMSNorm', f: 'o ← RMSNorm(o) ⊙ SiLU(z)', out: `${g.valueHeads} × ${g.valueDim}`, p: g.valueDim });
       ops.push({ name: 'Output projection', f: 'o·W<sub>out</sub>', out: n(H), p: vT * H });
     } else if (a.kind === 'MLA') {
@@ -31,7 +32,7 @@
         note: `cached per position: c_KV and k_R, ${a.kvRank + a.ropeDim} values` });
       ops.push({ name: 'Key/value up-projection', f: 'k<sub>C</sub> = c<sub>KV</sub>·W<sub>UK</sub>, v = c<sub>KV</sub>·W<sub>UV</sub>; k = [k<sub>C</sub>, k<sub>R</sub>]', out: `${a.heads} × (${a.nopeDim} + ${a.vDim})`, p: a.kvRank * a.heads * (a.nopeDim + a.vDim),
         note: 'in decode, W_UK and W_UV are multiplied into the query and output side instead (absorbed)' });
-      ops.push({ name: 'Attention', f: `A = softmax(q·kᵀ / √${dqk}) over positions ≤ t; o = A·v`, out: `${a.heads} × ${a.vDim}`, p: 0, mix: true });
+      ops.push({ name: 'Attention', f: `A = softmax(${yarn ? 'm²·' : ''}q·kᵀ / √${dqk}) over positions ≤ t; o = A·v${yarn ? `; m = 1 + 0.1·ln ${m.ropeScaling.factor} ≈ ${yarn.toFixed(3)} (YaRN)` : ''}`, out: `${a.heads} × ${a.vDim}`, p: 0, mix: true });
       ops.push({ name: 'Output projection', f: 'o·W<sub>O</sub>', out: n(H), p: a.heads * a.vDim * H });
     } else {
       const q = a.heads * a.headDim, k = a.kvHeads * a.headDim, qOut = q * (a.outputGate ? 2 : 1);
@@ -41,7 +42,7 @@
         out: `q ${a.heads} × ${a.headDim}; k, v ${a.kvHeads} × ${a.headDim}${a.outputGate ? `; g ${a.heads} × ${a.headDim}` : ''}`, p: H * qOut + 2 * H * k + bias,
         note: a.kind === 'GQA' ? `each K/V head is shared by ${grp} query heads` : 'one K/V head per query head' });
       if (a.qkNorm) ops.push({ name: 'QK-norm', f: 'RMSNorm on each query and key head', out: 'same', p: 2 * a.headDim });
-      if (m.position === 'rope') ops.push({ name: 'Rotary position embedding', f: `rotate pairs of dims of q and k by angle position × θ<sub>i</sub>${m.ropeFraction ? ` (first ${m.ropeFraction * 100}% of each head)` : ''}`, out: 'same', p: 0 });
+      if (m.position === 'rope') ops.push({ name: 'Rotary position embedding', f: `rotate pairs of dims of q and k by angle position × θ<sub>i</sub>${m.ropeFraction ? ` (${m.ropeFraction * 100}% of each head's dims)` : ''}${yarn ? `; q and k also × ${yarn.toFixed(3)} (YaRN: 1 + 0.1·ln ${m.ropeScaling.factor}), so q·k × ${(yarn * yarn).toFixed(3)}` : ''}`, out: 'same', p: 0 });
       const win = t === 'sliding' ? `the last ${a.window} positions` : 'positions ≤ t';
       ops.push({ name: t === 'sliding' ? `Attention, window ${a.window}` : 'Attention', f: `A = softmax(q·kᵀ / √${a.headDim}${a.sinks ? ', with one sink logit per head' : ''}) over ${win}; o = A·v`, out: `${a.heads} × ${a.headDim}`, p: a.sinks ? a.heads : 0, mix: true,
         note: `cached per position: k and v, ${2 * a.kvHeads * a.headDim} values${t === 'sliding' ? `, at most ${a.window} positions` : ''}` });
@@ -63,8 +64,9 @@
       }
     } else {
       const ml = moeLayer(m);
-      ops.push({ name: 'Router', f: `s = x̂·W<sub>r</sub>${f.routerBias ? ' + b' : ''}; select ${f.topK} of ${f.experts}`, out: `${f.experts} scores → ${f.topK} experts`, p: ml.router });
-      ops.push({ name: `${f.topK} routed experts`, f: 'y<sub>e</sub> = (SiLU(x̂·W<sub>gate,e</sub>) ⊙ x̂·W<sub>up,e</sub>)·W<sub>down,e</sub>', out: `${f.topK} × ${n(H)}`, p: f.topK * ml.perExpert,
+      ops.push({ name: 'Router', f: f.router === 'sigmoid-grouped' ? `s = σ(x̂·W<sub>r</sub>); keep the ${f.topkGroups} of ${f.groups} groups, then the ${f.topK} experts, ranked by s + b (b only for selection); g<sub>e</sub> = ${f.routedScale}·s<sub>e</sub> / Σ<sub>selected</sub> s`
+        : f.router === 'topk-softmax' ? `s = x̂·W<sub>r</sub> + b; keep the ${f.topK} largest; g = softmax over those ${f.topK}` : `p = softmax(x̂·W<sub>r</sub>); keep the ${f.topK} largest${f.normTopK ? ', rescaled to sum to 1' : ''}`, out: `${f.experts} scores → ${f.topK} experts`, p: ml.router });
+      ops.push({ name: `${f.topK} routed experts`, f: f.swigluLimit ? `y<sub>e</sub> = ((a ⊙ σ(1.702·a)) ⊙ (u + 1))·W<sub>down,e</sub> + b; a = min(x̂·W<sub>gate,e</sub> + b, ${f.swigluLimit}), u = clamp(x̂·W<sub>up,e</sub> + b, −${f.swigluLimit}, ${f.swigluLimit})` : 'y<sub>e</sub> = (SiLU(x̂·W<sub>gate,e</sub>) ⊙ x̂·W<sub>up,e</sub>)·W<sub>down,e</sub>', out: `${f.topK} × ${n(H)}`, p: f.topK * ml.perExpert,
         note: `${f.experts - f.topK} other experts of this layer, ${fmtParams((f.experts - f.topK) * ml.perExpert)} parameters, are stored but not used for this token` });
       if (f.shared) ops.push({ name: 'Shared expert', f: `same FFN shape${f.sharedGate ? ', output × σ(x̂·w<sub>s</sub>)' : ''}`, out: n(H), p: ml.shared });
       ops.push({ name: 'Weighted sum', f: `y = Σ g<sub>e</sub>·y<sub>e</sub>${f.shared ? ' + shared' : ''}`, out: n(H), p: 0 });
@@ -144,11 +146,11 @@
       <h2>FLOPs for one generated token</h2>${figFlops(m, W)}
       <details class="more"><summary>Formulas</summary><ul class="formulas">
         <li>Pre-norm residual layer: h ← h + Mix(Norm(h)); h ← h + FFN(Norm(h)). After the last layer: z = Norm(h)·W<sub>out</sub>.</li>
-        <li>RMSNorm: x / √(mean(x²) + ε) ⊙ g (ε = ${m.normEps}). LayerNorm subtracts the mean and adds a bias as well.</li>
-        <li>Rotary embedding: dims (2i, 2i+1) of q and k are rotated by angle p·θ<sup>−2i/d</sup> at position p, so q·k depends on the distance between positions.</li>
+        <li>RMSNorm: x / √(mean(x²) + ε) ⊙ g (ε = ${m.normEps}). LayerNorm subtracts the mean and adds a bias as well.${m.normGainPlusOne ? ' Qwen3.5 stores w = g − 1 and computes x / √(mean(x²) + ε) ⊙ (1 + w).' : ''}</li>
+        <li>Rotary embedding: d/2 pairs of dims of q and k are rotated, pair i by angle p·θ<sup>−2i/d</sup> at position p (θ = rope_theta). The RoPE paper and DeepSeek-V3 pair dims 2i and 2i+1; the gpt-oss and Hugging Face Qwen code pair dim i with dim i + d/2, the same function up to a fixed permutation of dims. A query at position m and a key at position n then interact only through m − n.</li>
         <li>Weights used per token in the whole network: ${fmtParams(P.matmul)} (the embedding lookup reads one row and multiplies nothing), so about ${fmtFlops(2 * P.matmul)} per token before attention.</li>
       </ul></details>
-      <p class="sources">Sources: <a href="${esc(m.source)}" target="_blank" rel="noreferrer">${esc(m.name)} config.json</a> · <a href="https://arxiv.org/abs/1706.03762" target="_blank" rel="noreferrer">Attention Is All You Need</a> · <a href="https://arxiv.org/abs/2104.09864" target="_blank" rel="noreferrer">RoPE</a> · <a href="https://arxiv.org/abs/2305.13245" target="_blank" rel="noreferrer">GQA</a> · <a href="https://arxiv.org/abs/2405.04434" target="_blank" rel="noreferrer">MLA (DeepSeek-V2)</a> · <a href="https://arxiv.org/abs/2412.06464" target="_blank" rel="noreferrer">Gated DeltaNet</a> · <a href="https://arxiv.org/abs/2002.05202" target="_blank" rel="noreferrer">SwiGLU</a>.</p>`;
+      <p class="sources">Sources: ${configLink(m, 'config.json', true)} · <a href="https://arxiv.org/abs/1706.03762" target="_blank" rel="noreferrer">Attention Is All You Need</a> · <a href="https://arxiv.org/abs/2104.09864" target="_blank" rel="noreferrer">RoPE</a> · <a href="https://arxiv.org/abs/2305.13245" target="_blank" rel="noreferrer">GQA</a> · <a href="https://arxiv.org/abs/2405.04434" target="_blank" rel="noreferrer">MLA (DeepSeek-V2)</a> · <a href="https://arxiv.org/abs/2412.06464" target="_blank" rel="noreferrer">Gated DeltaNet</a> · <a href="https://arxiv.org/abs/2505.06708" target="_blank" rel="noreferrer">Gated Attention</a> · <a href="https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen3_5_moe/modeling_qwen3_5_moe.py" target="_blank" rel="noreferrer">Qwen3.5 modeling code</a> · <a href="https://arxiv.org/abs/2508.10925" target="_blank" rel="noreferrer">gpt-oss model card</a> · <a href="https://arxiv.org/abs/2002.05202" target="_blank" rel="noreferrer">SwiGLU</a>.</p>`;
   }
 
   function mount(root, ctx, rerender) {

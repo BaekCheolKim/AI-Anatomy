@@ -118,6 +118,15 @@ function weightClasses(m) {
 const CLASS_NAME = { experts: 'routed experts', linear: 'attention, shared experts and dense FFNs', embed: 'embedding and output layer', small: 'norms and routers', vision: 'vision encoder' };
 
 // Dtype per class for the published weights; classes a release doesn't name stay in BF16.
+// Serving on G GPUs with r per node: tensor parallelism inside a node, pipeline parallelism across nodes
+// (vLLM's guidance). TP must divide the attention heads; TP × PP can then use fewer than G GPUs.
+function servingLayout(m, G, r) {
+  let tp = Math.min(G, r);
+  while (m.attention.heads % tp) tp--;
+  const pp = Math.max(1, Math.floor(G / tp));
+  return { tp, pp, used: tp * pp, why: tp < Math.min(G, r) ? `the tensor-parallel size must divide the ${m.attention.heads} attention heads` : `${G} is not a multiple of ${r} GPUs per node` };
+}
+
 function releaseDtypes(m) {
   const r = m.release || {};
   const d = { experts: 'bf16', linear: 'bf16', embed: 'bf16', small: 'bf16', vision: 'bf16' };
@@ -345,7 +354,7 @@ function validateLayout(m, S) {
     if (m.ffn.experts % S.ep) out.push(`EP ${S.ep} does not divide the ${m.ffn.experts} experts.`);
     if ((S.dp * S.cp * S.tp) % S.ep) out.push(`EP ${S.ep} must divide DP × CP × TP = ${S.dp * S.cp * S.tp}.`);
   } else if (S.ep > 1) out.push('EP applies only to MoE models.');
-  if (S.seq % S.cp) out.push(`CP ${S.cp} does not divide the sequence length ${S.seq}.`);
+  if (S.cp > 1 && S.seq % (2 * S.cp)) out.push(`With CP ${S.cp}, the sequence length ${S.seq} must be divisible by 2 × CP = ${2 * S.cp}: each CP rank takes two chunks.`);
   if (!Number.isInteger(L.micro) || L.micro < 1) out.push(`The global batch ${S.gbs} is not a multiple of DP × micro-batch = ${S.dp * S.mbs}.`);
   return out;
 }

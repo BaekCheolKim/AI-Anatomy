@@ -10,7 +10,7 @@
       <tr><td>chosen</td><td class="f">Plants use light to turn carbon dioxide and water into sugar and oxygen.</td><td class="r"><input id="pf-c" type="number" step="0.1" value="${rc}" class="num-in"></td></tr>
       <tr><td>rejected</td><td class="f">Photosynthesis is a very important process that happens in many living things in nature.</td><td class="r"><input id="pf-r" type="number" step="0.1" value="${rr}" class="num-in"></td></tr></tbody></table>
       <p class="status">P(chosen preferred) = σ(r<sub>chosen</sub> − r<sub>rejected</sub>) = σ(${(rc - rr).toFixed(1)}) = <b>${p.toFixed(3)}</b>; this pair's loss −ln ${p.toFixed(3)} = ${(-Math.log(p)).toFixed(3)}.</p>
-      <p class="caption">A person saw both answers and chose one. The reward model, a copy of the language model with its output layer replaced by one number, is trained to score the chosen answer higher. Scores are illustrative; change them to see the loss.</p>`;
+      <p class="caption">A person saw both answers and chose one. The reward model is a transformer language model initialized from a pre-trained or fine-tuned checkpoint, not necessarily of the policy's size (InstructGPT: a 6B reward model for a 175B policy), with the output layer replaced by a linear layer that outputs one number. It is trained to score the chosen answer higher. Scores are illustrative; change them to see the loss.</p>`;
   }
 
   function figMemory(m, ctx, W) {
@@ -41,12 +41,12 @@
       <h2>Models in memory</h2>${figMemory(m, ctx, W)}
       <h2>Limits</h2>
       <ul class="formulas">
-        <li>The reward model is itself a network trained on finite data. Optimizing against it for many steps finds answers it scores highly that people would not prefer, so RLHF runs are kept short and penalized for moving far from the starting model (KL term).</li>
+        <li>The reward model is itself a network trained on finite data. Optimizing against it for many steps finds answers it scores highly that people would not prefer, so RLHF adds a per-token KL penalty toward the starting model (InstructGPT) and retrains the reward model on outputs of the current policy in each round (Llama 2).</li>
         <li>Comparing two answers is easier for people than writing the best answer, which is why preference data adds to demonstration data.</li>
       </ul>
       <details class="more"><summary>Formulas</summary><ul class="formulas">
         <li>Reward model (Bradley–Terry): L = −ln σ(r(x, y<sub>w</sub>) − r(x, y<sub>l</sub>)) for chosen y<sub>w</sub> and rejected y<sub>l</sub>.</li>
-        <li>RLHF objective: maximize E[r(x, y)] − β·KL(π<sub>θ</sub>(y|x) ‖ π<sub>ref</sub>(y|x)), optimized with PPO, which also trains a value model to estimate expected reward per token.</li>
+        <li>RLHF objective: maximize E[r(x, y)] − β·KL(π<sub>θ</sub>(y|x) ‖ π<sub>ref</sub>(y|x)), optimized with PPO, which also trains a value model that predicts, at each token position, the expected return (the rewards from that position to the end of the answer, including per-token KL penalties); generalized advantage estimation (GAE) computes the advantages from it.</li>
         <li>DPO: L = −ln σ(β·[ln π<sub>θ</sub>(y<sub>w</sub>|x)/π<sub>ref</sub>(y<sub>w</sub>|x) − ln π<sub>θ</sub>(y<sub>l</sub>|x)/π<sub>ref</sub>(y<sub>l</sub>|x)]): the same objective solved in closed form for the policy, so only the log-probabilities of the two answers are needed.</li>
       </ul></details>
       <p class="sources">Sources: <a href="https://arxiv.org/abs/2203.02155" target="_blank" rel="noreferrer">InstructGPT</a> · <a href="https://arxiv.org/abs/2305.18290" target="_blank" rel="noreferrer">DPO (Rafailov et al., 2023)</a> · <a href="https://arxiv.org/abs/2307.09288" target="_blank" rel="noreferrer">Llama 2 paper (RLHF with PPO)</a> · <a href="https://arxiv.org/abs/2407.21783" target="_blank" rel="noreferrer">Llama 3 paper (DPO)</a>.</p>`;

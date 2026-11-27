@@ -62,7 +62,7 @@
         + `<text x="${narrow ? W : x1 + 10}" y="${narrow ? y - 2 : y + 14}"${narrow ? ' text-anchor="end"' : ''} class="val">${fmtN(mm.context)}</text></g>`;
     });
     return `${figure(s, W, models.length * rowH + (narrow ? 20 : 8), 'context lengths')}
-      <p class="caption">Maximum window length in tokens (max_position_embeddings in config.json; log scale). How the models reach these lengths is in Long context.</p>`;
+      <p class="caption">Maximum window length in tokens (max_position_embeddings in config.json, inside text_config for Qwen3-VL and Qwen3.5; n_positions for GPT-2; log scale). How the models reach these lengths is in Long context.</p>`;
   }
 
   function render(ctx) {
@@ -79,7 +79,7 @@
         <li>Loss of a window: L = −(1/T) Σ<sub>t</sub> ln p<sub>t</sub>[x<sub>t+1</sub>], the cross-entropy between the predictions and the tokens that follow.</li>
         <li>Perplexity e<sup>L</sup>: a uniform distribution over e<sup>L</sup> tokens has loss L. A uniform distribution over all ${fmtN(m.vocab)} entries has L = ln ${fmtN(m.vocab)} = ${Math.log(m.vocab).toFixed(2)}.</li>
       </ul></details>
-      <p class="sources">Sources: <a href="${esc(m.source)}" target="_blank" rel="noreferrer">${esc(m.name)} config.json</a>.</p>`;
+      <p class="sources">Sources: ${configLink(m)}.</p>`;
   }
 
   function mount(root, ctx, rerender) {
